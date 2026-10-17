@@ -677,7 +677,6 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
     addAndMakeVisible (rerollBtn);
 
     playBtn.setTooltip (U ("Vorhören ohne laufenden Host – läuft der Host, folgt das Plugin dem Host"));
-    playBtn.onClick = [this] { proc.setPreviewPlaying (! proc.isPreviewPlaying()); };
     addAndMakeVisible (playBtn);
 
     soundAtt = std::make_unique<APVTS::ButtonAttachment> (s, "sound", soundBtn);
@@ -739,6 +738,39 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
         };
         addAndMakeVisible (b);
     }
+
+    playBtn.onClick = [this]
+    {
+        if (proc.isPreviewPlaying()) proc.setPreviewPlaying (false);
+        else proc.restartPreview();
+    };
+    loopAtt = std::make_unique<APVTS::ButtonAttachment> (s, "loop", loopBtn);
+    loopBtn.setTooltip (U ("An: Section/Song läuft in Schleife · Aus: einmal abspielen und stoppen"));
+    addAndMakeVisible (loopBtn);
+    posLbl.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    posLbl.setColour (juce::Label::textColourId, Colours::text);
+    posLbl.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (posLbl);
+
+    kbdLbl.setText ("KEYBOARD", juce::dontSendNotification);
+    kbdLbl.setFont (juce::FontOptions (12.0f));
+    kbdBox.addItemList ({ "Auto (MIDI-Kanal)", "Drums", "Bass", "Keys", "Pad", "Lead" }, 1);
+    kbdAtt = std::make_unique<APVTS::ComboBoxAttachment> (s, "kbd", kbdBox);
+    kbdBox.setTooltip (U ("Welches Instrument dein MIDI-Keyboard spielt. Auto: Kanal 10 = Drums, 1 = Bass, 2 = Keys, 3 = Pad, 4 = Lead"));
+    kbdInfo.setFont (juce::FontOptions (11.0f));
+    addAndMakeVisible (kbdLbl);
+    addAndMakeVisible (kbdBox);
+    addAndMakeVisible (kbdInfo);
+
+    projectBtn.setButtonText (U ("Projekt ▾"));
+    projectBtn.setTooltip (U ("Kompletten Beat (alle Einstellungen, Sounds, Sample-Pfade) speichern oder öffnen"));
+    projectBtn.onClick = [this] { showProjectMenu(); };
+    addAndMakeVisible (projectBtn);
+
+    audioBtn.setButtonText (U ("WAV-Export ▾"));
+    audioBtn.setTooltip (U ("Beat als WAV rendern – Mix und/oder Stems pro Spur (48 kHz / 24 Bit)"));
+    audioBtn.onClick = [this] { showAudioMenu(); };
+    addAndMakeVisible (audioBtn);
 
     profileBtn.setButtonText (U ("Sound-Profil ▾"));
     profileBtn.setTooltip (U ("Kompletten Sound (alle Instrumente + Drums) speichern oder laden"));
@@ -856,6 +888,101 @@ void HipHopBeatMakerEditor::showProfileMenu()
     });
 }
 
+void HipHopBeatMakerEditor::showAudioMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Section");
+    m.addItem (1, "Mix");
+    m.addItem (2, U ("Stems (jede Spur einzeln)"));
+    m.addItem (3, "Mix + Stems");
+    m.addSectionHeader ("Full Song");
+    m.addItem (4, "Mix");
+    m.addItem (5, U ("Stems (jede Spur einzeln)"));
+    m.addItem (6, "Mix + Stems");
+    m.addSeparator();
+    m.addItem (7, U ("Export-Ordner öffnen"));
+
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&audioBtn), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 7) { MidiExport::exportRoot().startAsProcess(); return; }
+        const bool song = r >= 4;
+        const int k = (r - 1) % 3; // 0 mix, 1 stems, 2 both
+        if (! safe->proc.startAudioRender (song, k != 1, k != 0))
+            safe->statusLbl.setText (U ("Es läuft bereits ein Export …"), juce::dontSendNotification);
+    });
+}
+
+void HipHopBeatMakerEditor::saveProjectAs()
+{
+    const auto start = proc.currentProject.existsAsFile() ? proc.currentProject
+                                                          : HipHopBeatMakerProcessor::projectFolder().getChildFile ("Mein Beat.hhbeat");
+    chooser = std::make_unique<juce::FileChooser> (U ("Projekt speichern"), start, "*.hhbeat");
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safe] (const juce::FileChooser& fc)
+                          {
+                              if (safe == nullptr) return;
+                              auto f = fc.getResult();
+                              if (f == juce::File()) return;
+                              if (! f.hasFileExtension ("hhbeat")) f = f.withFileExtension ("hhbeat");
+                              safe->statusLbl.setText (safe->proc.saveProject (f) ? U ("Projekt gespeichert: ") + f.getFileName()
+                                                                                  : U ("Speichern fehlgeschlagen"), juce::dontSendNotification);
+                              safe->repaint();
+                          });
+}
+
+void HipHopBeatMakerEditor::showProjectMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, U ("Öffnen…"));
+    m.addItem (2, "Speichern", proc.currentProject != juce::File());
+    m.addItem (3, "Speichern unter…");
+    m.addSeparator();
+
+    auto files = HipHopBeatMakerProcessor::projectFolder().findChildFiles (juce::File::findFiles, false, "*.hhbeat");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+               { return a.getLastModificationTime() > b.getLastModificationTime(); });
+    juce::PopupMenu recent;
+    for (int i = 0; i < juce::jmin (12, files.size()); ++i)
+        recent.addItem (100 + i, files[i].getFileNameWithoutExtension());
+    m.addSubMenu ("Zuletzt", recent, ! files.isEmpty());
+    m.addItem (4, U ("Projekt-Ordner öffnen"));
+
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&projectBtn), [safe, files] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& pr = safe->proc;
+        auto opened = [safe] (const juce::File& f, bool ok)
+        {
+            safe->statusLbl.setText (ok ? U ("Projekt geöffnet: ") + f.getFileName() : U ("Datei konnte nicht geöffnet werden"), juce::dontSendNotification);
+            safe->repaint();
+        };
+        if (r == 1)
+        {
+            safe->chooser = std::make_unique<juce::FileChooser> (U ("Projekt öffnen"), HipHopBeatMakerProcessor::projectFolder(), "*.hhbeat");
+            safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                        [safe, opened] (const juce::FileChooser& fc)
+                                        {
+                                            if (safe == nullptr) return;
+                                            const auto f = fc.getResult();
+                                            if (f.existsAsFile()) opened (f, safe->proc.loadProject (f));
+                                        });
+        }
+        else if (r == 2)
+        {
+            const bool ok = pr.saveProject (pr.currentProject);
+            safe->statusLbl.setText (ok ? U ("Projekt gespeichert: ") + pr.currentProject.getFileName() : U ("Speichern fehlgeschlagen"), juce::dontSendNotification);
+        }
+        else if (r == 3) safe->saveProjectAs();
+        else if (r == 4) HipHopBeatMakerProcessor::projectFolder().startAsProcess();
+        else if (r >= 100) opened (files[r - 100], pr.loadProject (files[r - 100]));
+    });
+}
+
 void HipHopBeatMakerEditor::showStyleDialog()
 {
     const auto pending = proc.pendingStyleChange;
@@ -916,7 +1043,45 @@ void HipHopBeatMakerEditor::timerCallback()
     for (int i = 0; i < sectionButtons.size(); ++i)
         sectionButtons[i]->setToggleState (i == section, juce::dontSendNotification);
 
-    playBtn.setButtonText (proc.isPreviewPlaying() ? "Stop" : "Play");
+    playBtn.setButtonText (proc.isPreviewPlaying() ? U ("■ Stop") : U ("▶ Play"));
+    {
+        const double b = proc.uiBeat.load();
+        juce::String t = "--";
+        if (b >= 0)
+        {
+            const int bar = (int) (b / 4.0) + 1, beat = (int) std::fmod (b, 4.0) + 1;
+            t = "Takt " + juce::String (bar) + "." + juce::String (beat);
+            if (auto pat = proc.getPattern())
+            {
+                t << " / " << (int) (pat->lengthBeats / 4.0);
+                for (auto& m : pat->markers)
+                    if (pat->markers.size() > 1 && b >= m.start && b < m.start + m.length)
+                        t = juce::String (sectionName (m.section)) + "  " + t;
+            }
+        }
+        posLbl.setText (t, juce::dontSendNotification);
+    }
+
+    const int note = proc.lastLiveNote.load();
+    if (note != lastNoteSeen && note >= 0)
+    {
+        lastNoteSeen = note;
+        kbdFlash = 15;
+        kbdInfo.setText (U ("♪ ") + SampleTools::noteName (note), juce::dontSendNotification);
+    }
+    if (kbdFlash > 0 && --kbdFlash == 0)
+        kbdInfo.setText ({}, juce::dontSendNotification);
+    kbdInfo.setColour (juce::Label::textColourId, kbdFlash > 0 ? Colours::gold : Colours::dim);
+
+    if (proc.renderBusy.load())
+        statusLbl.setText (U ("WAV wird gerendert … ") + juce::String (juce::roundToInt (proc.renderProgress.load() * 100)) + " %", juce::dontSendNotification);
+    else if (proc.renderCounter.load() != lastRenderCount)
+    {
+        lastRenderCount = proc.renderCounter.load();
+        const auto folder = proc.lastRenderFolder();
+        statusLbl.setText (U ("WAV exportiert: ") + folder.getFileName(), juce::dontSendNotification);
+        folder.revealToUser();
+    }
     playBtn.setToggleState (proc.isPreviewPlaying(), juce::dontSendNotification);
 
     const double h = proc.hostBpm.load();
@@ -969,6 +1134,12 @@ void HipHopBeatMakerEditor::paint (juce::Graphics& g)
     g.setColour (Colours::dim);
     g.setFont (juce::FontOptions (12.0f));
     g.drawText ("by JustCreateit.ch", header.withTrimmedLeft (265), juce::Justification::centredLeft);
+    if (proc.currentProject != juce::File())
+    {
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (proc.currentProject.getFileNameWithoutExtension(), header.withTrimmedLeft (380).withWidth (200), juce::Justification::centredLeft, true);
+    }
 
     g.setColour (Colours::panelHi);
     g.drawHorizontalLine (50, 16.0f, (float) getWidth() - 16.0f);
@@ -983,7 +1154,9 @@ void HipHopBeatMakerEditor::resized()
     auto area = getLocalBounds().reduced (16, 0);
     auto header = area.removeFromTop (50);
     bpmInfo.setBounds (header.removeFromRight (180));
-    profileBtn.setBounds (header.removeFromRight (150).withSizeKeepingCentre (150, 30));
+    profileBtn.setBounds (header.removeFromRight (140).withSizeKeepingCentre (140, 30));
+    header.removeFromRight (8);
+    projectBtn.setBounds (header.removeFromRight (110).withSizeKeepingCentre (110, 30));
 
     // combos
     area.removeFromTop (8);
@@ -1017,6 +1190,9 @@ void HipHopBeatMakerEditor::resized()
     playBtn.setBounds (row.removeFromRight (90));
     row.removeFromRight (8);
     rerollBtn.setBounds (row.removeFromRight (120));
+    row.removeFromRight (6);
+    loopBtn.setBounds (row.removeFromRight (64));
+    posLbl.setBounds (row);
 
     // knobs
     area.removeFromTop (8);
@@ -1041,8 +1217,14 @@ void HipHopBeatMakerEditor::resized()
     {
         auto col = row;
         col.removeFromTop (20);
-        soundBtn.setBounds (col.removeFromTop (24).removeFromLeft (130));
-        midiOutBtn.setBounds (col.removeFromTop (24).removeFromLeft (130));
+        auto toggles = col.removeFromLeft (130);
+        soundBtn.setBounds (toggles.removeFromTop (24));
+        midiOutBtn.setBounds (toggles.removeFromTop (24));
+        col.removeFromLeft (16);
+        auto k = col.removeFromLeft (200);
+        kbdLbl.setBounds (k.removeFromTop (16));
+        kbdBox.setBounds (k.removeFromTop (26));
+        kbdInfo.setBounds (k.removeFromTop (18));
     }
 
     // lanes
@@ -1068,13 +1250,15 @@ void HipHopBeatMakerEditor::resized()
     // export row
     area.removeFromTop (4);
     row = area.removeFromTop (34);
-    allTile->setBounds (row.removeFromLeft (200));
+    allTile->setBounds (row.removeFromLeft (180));
     row.removeFromLeft (10);
-    exportSectionBtn.setBounds (row.removeFromLeft (170));
+    exportSectionBtn.setBounds (row.removeFromLeft (150));
     row.removeFromLeft (8);
-    exportSongBtn.setBounds (row.removeFromLeft (180));
+    exportSongBtn.setBounds (row.removeFromLeft (150));
     row.removeFromLeft (8);
     openFolderBtn.setBounds (row.removeFromLeft (120));
+    row.removeFromLeft (8);
+    audioBtn.setBounds (row.removeFromLeft (130));
     row.removeFromLeft (10);
     statusLbl.setBounds (row);
 

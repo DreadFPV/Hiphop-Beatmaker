@@ -26,6 +26,17 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
   - 808-Glides funktionieren auch mit eigenem Sample (Trap/Drill)
   - Tuning 432 Hz wirkt auch auf Samples
 
+## Standalone-App
+`Hip-Hop BeatMaker.exe` (Windows) bzw. `Hip-Hop BeatMaker.app` (macOS) liegt im selben ZIP wie das Plugin – einfach starten.
+- **Options** (oben links): Audio-Ausgang und **MIDI-Eingang** (Keyboard) aktivieren
+- **Transport:** ▶ Play startet am Anfang, ■ Stop · **Loop** an = Schleife, aus = einmal abspielen · Positionsanzeige (Takt, Section)
+- **Keyboard:** wählt, welches Instrument dein MIDI-Keyboard spielt (Auto: Kanal 10 = Drums, 1 = Bass, 2 = Keys, 3 = Pad, 4 = Lead)
+- **WAV-Export ▾:** Section oder Full Song als Mix und/oder Stems pro Spur (48 kHz / 24 Bit) nach `Dokumente/Hip-Hop BeatMaker/Exports`
+- **Projekt ▾:** Öffnen, Speichern, Speichern unter, Zuletzt – Dateien `.hhbeat` in `Dokumente/Hip-Hop BeatMaker/Projekte`
+  (enthält alle Einstellungen, Sounds und Sample-Pfade; die Samples selbst bleiben an ihrem Ort)
+
+Alle diese Funktionen gibt es auch im Plugin.
+
 ## Sound-Editor
 Button **„Sound"** neben jeder Spur öffnet den Editor (Tabs oben wechseln das Instrument):
 - **Bass, Keys, Pad, Lead – Synth:**
@@ -60,10 +71,12 @@ Lokal:
 cmake -S . -B build
 cmake --build build --config Release
 ```
-Offline-Test (generiert alle Styles, prüft Daten, rendert WAVs):
+Tests (Generator, Synth, Samples, Prozessor, Export, Projekte):
 ```bash
-cmake -S . -B build -DHHBM_BUILD_TESTS=ON && cmake --build build --target HHBMRenderTest
+cmake -S . -B build -DHHBM_BUILD_TESTS=ON
+cmake --build build --target HHBMRenderTest HHBMProcessorTest
 ./build/HHBMRenderTest_artefacts/Release/HHBMRenderTest ./render
+./build/HHBMProcessorTest_artefacts/Release/HHBMProcessorTest
 ```
 
 ## Installation

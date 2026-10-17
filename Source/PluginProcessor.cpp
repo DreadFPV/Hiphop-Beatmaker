@@ -35,6 +35,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout HipHopBeatMakerProcessor::cr
 
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "sound", 1 }, "Sounds On", true));
     l.add (std::make_unique<AudioParameterBool> (ParameterID { "midiout", 1 }, "MIDI Out", false));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { "loop", 1 }, "Preview Loop", true));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { "kbd", 1 }, "Keyboard Target",
+        StringArray { "Auto (MIDI-Kanal)", "Drums", "Bass", "Keys", "Pad", "Lead" }, 3));
 
     for (int t = 0; t < numTracks; ++t)
     {
@@ -131,6 +134,8 @@ HipHopBeatMakerProcessor::HipHopBeatMakerProcessor()
     pBpm     = apvts.getRawParameterValue ("bpm");
     pSound   = apvts.getRawParameterValue ("sound");
     pMidiOut = apvts.getRawParameterValue ("midiout");
+    pLoop    = apvts.getRawParameterValue ("loop");
+    pKbd     = apvts.getRawParameterValue ("kbd");
     for (int t = 0; t < numTracks; ++t)
     {
         pVol[(size_t) t]  = apvts.getRawParameterValue ("vol" + juce::String (t));
@@ -165,6 +170,7 @@ HipHopBeatMakerProcessor::HipHopBeatMakerProcessor()
 
 HipHopBeatMakerProcessor::~HipHopBeatMakerProcessor()
 {
+    renderPool.removeAllJobs (true, 10000);
     cancelPendingUpdate();
     for (auto* id : genParams)
         apvts.removeParameterListener (id, this);
@@ -182,6 +188,7 @@ void HipHopBeatMakerProcessor::prepareToPlay (double sampleRate, int samplesPerB
     engine.prepare (sampleRate, samplesPerBlock);
     engine.setStyle ((int) pStyle->load());
     pending.reserve (8192);
+    live.reserve (512);
     for (auto& h : held) h.reset();
     wasRunning = false;
     expectedNextBeat = -1;
@@ -304,11 +311,73 @@ void HipHopBeatMakerProcessor::releaseHeld (juce::MidiBuffer& midi, int offset)
     engine.allNotesOff();
 }
 
+void HipHopBeatMakerProcessor::applyParams (SynthEngine& e) const
+{
+    e.setStyle ((int) pStyle->load());
+    e.setTuning (pTuning->load() > 0.5f ? 432.0f : 440.0f);
+    for (int t = 0; t < numTracks; ++t)
+        e.setTrackGain (t, pMute[(size_t) t]->load() > 0.5f ? 0.0f : pVol[(size_t) t]->load());
+    for (int t = 1; t < numTracks; ++t)
+    {
+        Patch patch;
+        for (int i = 0; i < numSynthParams; ++i)
+            setPatchValue (patch, i, pSyn[(size_t) t][(size_t) i]->load());
+        e.setPatch (t, patch);
+    }
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+    {
+        const auto& d = pDrum[(size_t) slot];
+        e.setDrumTweak (slot, { d[dpTune]->load(), d[dpDecay]->load(), d[dpTone]->load(), d[dpLevel]->load() });
+    }
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const auto& sp = pSmp[(size_t) t];
+        SampleParams prm;
+        prm.root = sp.root->load();
+        prm.fineCents = sp.fine->load();
+        prm.attack = sp.att->load();
+        prm.release = sp.rel->load();
+        prm.loop = sp.loop->load() > 0.5f;
+        prm.loopStart = sp.ls->load();
+        prm.loopEnd = juce::jmax (sp.le->load(), prm.loopStart + 0.01f);
+        e.setSampleParams (t, prm);
+    }
+}
+
+int HipHopBeatMakerProcessor::keyboardTrack (int midiChannel) const
+{
+    const int k = (int) pKbd->load();
+    if (k > 0) return k - 1;
+    switch (midiChannel)
+    {
+        case 10: return (int) Track::Drums;
+        case 1:  return (int) Track::Bass;
+        case 3:  return (int) Track::Pad;
+        case 4:  return (int) Track::Lead;
+        default: return (int) Track::Keys;
+    }
+}
+
 void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     buffer.clear();
+
+    // ---------------------------------------------------- live MIDI (keyboard)
+    live.clear();
+    for (const auto meta : midi)
+    {
+        const auto m = meta.getMessage();
+        if (live.size() >= live.capacity()) break;
+        if (m.isNoteOn())
+            live.push_back ({ (double) meta.samplePosition, keyboardTrack (m.getChannel()), m.getNoteNumber(), m.getFloatVelocity(), true, true });
+        else if (m.isNoteOff())
+            live.push_back ({ (double) meta.samplePosition, keyboardTrack (m.getChannel()), m.getNoteNumber(), 0.0f, false, true });
+        else if (m.isAllNotesOff() || m.isAllSoundOff())
+            engine.allNotesOff();
+    }
+    if (! live.empty()) lastLiveNote = (int) live.back().pitch;
     midi.clear();
 
     {
@@ -322,35 +391,12 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         lastCompiled = c;
     }
 
-    engine.setStyle ((int) pStyle->load());
-    engine.setTuning (pTuning->load() > 0.5f ? 432.0f : 440.0f);
-    for (int t = 0; t < numTracks; ++t)
-        engine.setTrackGain (t, pMute[(size_t) t]->load() > 0.5f ? 0.0f : pVol[(size_t) t]->load());
-    for (int t = 1; t < numTracks; ++t)
-    {
-        Patch patch;
-        for (int i = 0; i < numSynthParams; ++i)
-            setPatchValue (patch, i, pSyn[(size_t) t][(size_t) i]->load());
-        engine.setPatch (t, patch);
-    }
-    for (int slot = 0; slot < numDrumSlots; ++slot)
-    {
-        const auto& d = pDrum[(size_t) slot];
-        engine.setDrumTweak (slot, { d[dpTune]->load(), d[dpDecay]->load(), d[dpTone]->load(), d[dpLevel]->load() });
-    }
+    applyParams (engine);
 
-    for (int t = 1; t < numTracks; ++t)
+    if (restartRequested.exchange (false))
     {
-        const auto& sp = pSmp[(size_t) t];
-        SampleParams prm;
-        prm.root = sp.root->load();
-        prm.fineCents = sp.fine->load();
-        prm.attack = sp.att->load();
-        prm.release = sp.rel->load();
-        prm.loop = sp.loop->load() > 0.5f;
-        prm.loopStart = sp.ls->load();
-        prm.loopEnd = juce::jmax (sp.le->load(), prm.loopStart + 0.01f);
-        engine.setSampleParams (t, prm);
+        internalBeat = 0;
+        releaseHeld (midi, 0);
     }
 
     // ---------------------------------------------------- transport
@@ -369,54 +415,73 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     const double beatsPerSample = bpm / 60.0 / sr;
     const double blockBeats = n * beatsPerSample;
+    const double len = c != nullptr ? c->pattern->lengthBeats : 0.0;
+    const bool loopPreview = pLoop->load() > 0.5f;
 
     bool running = false;
     double startBeat = 0;
-    if (hostPlaying)              { running = true; startBeat = ppq; }
-    else if (previewPlaying.load()) { running = true; startBeat = internalBeat; internalBeat += blockBeats; }
+    if (hostPlaying) { running = true; startBeat = ppq; }
+    else if (previewPlaying.load())
+    {
+        if (! loopPreview && len > 0 && internalBeat >= len)
+            previewPlaying = false; // played once to the end
+        else
+        {
+            running = true;
+            startBeat = internalBeat;
+            internalBeat += blockBeats;
+        }
+    }
 
-    const bool soundOn = pSound->load() > 0.5f;
+    pending.clear();
 
-    if (! running || c == nullptr || c->pattern->lengthBeats <= 0)
+    if (! running || c == nullptr || len <= 0)
     {
         if (wasRunning) releaseHeld (midi, 0);
         wasRunning = false;
         expectedNextBeat = -1;
         uiBeat = -1.0;
         if (! previewPlaying.load()) internalBeat = 0;
-        engine.render (buffer, 0, n); // let tails ring out
-        if (! soundOn) buffer.clear();
-        return;
+    }
+    else
+    {
+        if (wasRunning && std::abs (startBeat - expectedNextBeat) > 0.01)
+            releaseHeld (midi, 0); // host jumped
+        wasRunning = true;
+        expectedNextBeat = startBeat + blockBeats;
+
+        const bool once = ! hostPlaying && ! loopPreview;
+        double cur = once ? startBeat : std::fmod (startBeat, len);
+        if (cur < 0) cur += len;
+        uiBeat = cur;
+
+        double remaining = once ? std::min (blockBeats, len - cur) : blockBeats;
+        double sampleBase = 0;
+        int guard = 0;
+        while (remaining > 1.0e-12 && guard++ < 8)
+        {
+            const double segEnd = std::min (len, cur + remaining);
+            auto it = std::lower_bound (c->events.begin(), c->events.end(), cur,
+                                        [] (const Event& e, double b) { return e.beat < b; });
+            for (; it != c->events.end() && it->beat < segEnd; ++it)
+            {
+                int off = (int) (sampleBase + (it->beat - cur) / beatsPerSample);
+                pending.push_back ({ juce::jlimit (0, n - 1, off), &*it });
+            }
+            const double used = segEnd - cur;
+            sampleBase += used / beatsPerSample;
+            remaining -= used;
+            cur = segEnd >= len - 1.0e-12 ? 0.0 : segEnd;
+        }
     }
 
-    if (wasRunning && std::abs (startBeat - expectedNextBeat) > 0.01)
-        releaseHeld (midi, 0); // host jumped
-    wasRunning = true;
-    expectedNextBeat = startBeat + blockBeats;
-
-    const double len = c->pattern->lengthBeats;
-    double cur = std::fmod (startBeat, len);
-    if (cur < 0) cur += len;
-    uiBeat = cur;
-
-    // ---------------------------------------------------- collect events in this block
-    pending.clear();
-    double remaining = blockBeats, sampleBase = 0;
-    int guard = 0;
-    while (remaining > 1.0e-12 && guard++ < 8)
+    // merge live keyboard notes (pending stays sorted by offset)
+    for (const auto& e : live)
     {
-        const double segEnd = std::min (len, cur + remaining);
-        auto it = std::lower_bound (c->events.begin(), c->events.end(), cur,
-                                    [] (const Event& e, double b) { return e.beat < b; });
-        for (; it != c->events.end() && it->beat < segEnd; ++it)
-        {
-            int off = (int) (sampleBase + (it->beat - cur) / beatsPerSample);
-            pending.push_back ({ juce::jlimit (0, n - 1, off), &*it });
-        }
-        const double used = segEnd - cur;
-        sampleBase += used / beatsPerSample;
-        remaining -= used;
-        cur = segEnd >= len - 1.0e-12 ? 0.0 : segEnd;
+        const int off = juce::jlimit (0, n - 1, (int) e.beat);
+        auto it = std::upper_bound (pending.begin(), pending.end(), off,
+                                    [] (int o, const std::pair<int, const Event*>& p) { return o < p.first; });
+        pending.insert (it, { off, &e });
     }
 
     // ---------------------------------------------------- play
@@ -430,6 +495,14 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             pos = pe.first;
         }
         const Event& e = *pe.second;
+
+        if (e.live)
+        {
+            if (e.on) engine.noteOn (e.track, e.pitch, e.vel);
+            else      engine.noteOff (e.track, e.pitch);
+            continue;
+        }
+
         auto& h = held[(size_t) e.track];
         const bool muted = pMute[(size_t) e.track]->load() > 0.5f;
         const int ch = trackChannel (e.track);
@@ -455,7 +528,7 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
     if (pos < n) engine.render (buffer, pos, n - pos);
 
-    if (! soundOn) buffer.clear();
+    if (! soundOnParam()) buffer.clear();
 }
 
 // ============================================================ export
@@ -497,6 +570,134 @@ juce::File HipHopBeatMakerProcessor::writeDragFile (int track)
     auto file = dir.getChildFile (MidiExport::baseName (s, bpm) + "_" + suffix + ".mid");
     const auto mf = track < 0 ? MidiExport::allTracksFile (*pat, bpm) : MidiExport::trackFile (*pat, track, bpm);
     return MidiExport::write (mf, file) ? file : juce::File();
+}
+
+// ============================================================ audio export
+bool HipHopBeatMakerProcessor::startAudioRender (bool fullSong, bool mix, bool stems)
+{
+    if (renderBusy.exchange (true)) return false;
+    renderProgress = 0.0f;
+    renderPool.addJob ([this, fullSong, mix, stems]
+    {
+        const auto folder = renderAudioNow (fullSong, mix, stems);
+        {
+            const juce::SpinLock::ScopedLockType l (renderLock);
+            renderFolder = folder;
+        }
+        renderProgress = 1.0f;
+        renderBusy = false;
+        ++renderCounter;
+    });
+    return true;
+}
+
+juce::File HipHopBeatMakerProcessor::renderAudioNow (bool fullSong, bool mix, bool stems)
+{
+    auto s = currentSettings();
+    if (fullSong) s.section = (int) Section::FullSong;
+    const auto pat = Generator::generate (s);
+    const double bpm = exportBpm();
+    const double rate = 48000.0;
+    const auto base = MidiExport::baseName (s, bpm);
+
+    auto folder = MidiExport::exportRoot().getNonexistentChildFile (base + "_Audio", {}, false);
+    folder.createDirectory();
+
+    std::vector<Event> ev;
+    for (int t = 0; t < numTracks; ++t)
+        for (const auto& n : pat.tracks[(size_t) t])
+        {
+            ev.push_back ({ n.start, t, n.pitch, n.velocity, true });
+            ev.push_back ({ n.start + n.length, t, n.pitch, 0.0f, false });
+        }
+    std::sort (ev.begin(), ev.end(), [] (const Event& a, const Event& b)
+    {
+        if (a.beat != b.beat) return a.beat < b.beat;
+        return ! a.on && b.on;
+    });
+
+    const double spb = rate * 60.0 / bpm;
+    const int total = (int) (pat.lengthBeats * spb + rate * 2.5); // + tail
+
+    std::vector<int> jobs; // -1 = mix, else solo track
+    if (mix) jobs.push_back (-1);
+    if (stems)
+        for (int t = 0; t < numTracks; ++t)
+            if (! pat.tracks[(size_t) t].empty() && pMute[(size_t) t]->load() < 0.5f)
+                jobs.push_back (t);
+
+    for (size_t j = 0; j < jobs.size(); ++j)
+    {
+        const int solo = jobs[j];
+        SynthEngine e;
+        e.prepare (rate, 1024);
+        applyParams (e);
+        for (int slot = 0; slot < numDrumSlots; ++slot) e.setSample (slot, engine.getSample (slot));
+        for (int t = 1; t < numTracks; ++t) e.setInstrumentSample (t, engine.getInstrumentSample (t));
+        if (solo >= 0)
+            for (int t = 0; t < numTracks; ++t)
+                e.setTrackGain (t, t == solo ? pVol[(size_t) t]->load() : 0.0f);
+
+        juce::AudioBuffer<float> out (2, total);
+        out.clear();
+        int pos = 0;
+        for (const auto& x : ev)
+        {
+            const int at = juce::jmin (total, (int) (x.beat * spb));
+            if (at > pos) { e.render (out, pos, at - pos); pos = at; }
+            if (x.on) e.noteOn (x.track, x.pitch, x.vel);
+            else      e.noteOff (x.track, x.pitch);
+        }
+        if (pos < total) e.render (out, pos, total - pos);
+
+        const juce::String name = base + "_" + (solo < 0 ? juce::String ("Mix") : juce::String (trackName (solo))) + ".wav";
+        auto file = folder.getChildFile (name);
+        file.deleteFile();
+        juce::WavAudioFormat wav;
+        if (auto stream = file.createOutputStream())
+        {
+            std::unique_ptr<juce::OutputStream> os (stream.release());
+            if (auto* w = wav.createWriterFor (os.get(), rate, 2, 24, {}, 0))
+            {
+                os.release();
+                std::unique_ptr<juce::AudioFormatWriter> writer (w);
+                writer->writeFromAudioSampleBuffer (out, 0, total);
+            }
+        }
+        renderProgress = (float) (j + 1) / (float) jobs.size();
+    }
+    return folder;
+}
+
+// ============================================================ projects
+juce::File HipHopBeatMakerProcessor::projectFolder()
+{
+    auto d = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                 .getChildFile ("Hip-Hop BeatMaker").getChildFile ("Projekte");
+    d.createDirectory();
+    return d;
+}
+
+bool HipHopBeatMakerProcessor::saveProject (const juce::File& f)
+{
+    auto xml = apvts.copyState().createXml();
+    if (xml == nullptr) return false;
+    xml->setAttribute ("app", "Hip-Hop BeatMaker");
+    if (! xml->writeTo (f)) return false;
+    currentProject = f;
+    return true;
+}
+
+bool HipHopBeatMakerProcessor::loadProject (const juce::File& f)
+{
+    auto xml = juce::XmlDocument::parse (f);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return false;
+    juce::MemoryBlock mb;
+    copyXmlToBinary (*xml, mb);
+    setPreviewPlaying (false);
+    setStateInformation (mb.getData(), (int) mb.getSize());
+    currentProject = f;
+    return true;
 }
 
 // ============================================================ samples

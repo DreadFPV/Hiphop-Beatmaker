@@ -17,6 +17,7 @@ else()
         GIT_TAG 8.0.4
         GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(JUCE)
+
 endif()
 
 set(HHBM_FORMATS VST3 Standalone)
@@ -38,6 +39,7 @@ juce_add_plugin(HipHopBeatMaker
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
     VST3_CATEGORIES Instrument Drum Generator
     AU_MAIN_TYPE kAudioUnitType_MusicDevice)
 
@@ -79,4 +81,18 @@ if(HHBM_BUILD_TESTS)
     target_compile_definitions(HHBMRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(HHBMRenderTest PRIVATE juce::juce_audio_basics juce::juce_audio_formats
         PUBLIC juce::juce_recommended_config_flags)
+    juce_add_console_app(HHBMProcessorTest PRODUCT_NAME "HHBMProcessorTest")
+    target_sources(HHBMProcessorTest PRIVATE
+        Tests/ProcessorTest.cpp
+        Source/Generator.cpp
+        Source/SynthEngine.cpp
+        Source/MidiExport.cpp
+        Source/SampleTools.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp)
+    target_include_directories(HHBMProcessorTest PRIVATE Source)
+    target_compile_definitions(HHBMProcessorTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Name="HHBM")
+    target_link_libraries(HHBMProcessorTest PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
+        PUBLIC juce::juce_recommended_config_flags)
+
 endif()

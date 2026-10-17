@@ -168,6 +168,9 @@ private:
     void showProfileMenu();
     void askName (const juce::String& title, const juce::String& def, std::function<void (juce::String)> done);
     void showStyleDialog();
+    void showProjectMenu();
+    void showAudioMenu();
+    void saveProjectAs();
     void loadInstrumentFor (int track);
 
     using APVTS = juce::AudioProcessorValueTreeState;
@@ -204,7 +207,7 @@ private:
 
     // bottom
     std::unique_ptr<hhbm::ui::DragTile> allTile;
-    juce::TextButton exportSectionBtn { "Section exportieren" }, exportSongBtn { "Full Song exportieren" }, openFolderBtn { "Export-Ordner" };
+    juce::TextButton exportSectionBtn { "MIDI: Section" }, exportSongBtn { "MIDI: Full Song" }, openFolderBtn { "Export-Ordner" };
 
     // samples
     juce::OwnedArray<juce::TextButton> sampleBtns;
@@ -212,7 +215,13 @@ private:
 
     juce::Label statusLbl;
     std::unique_ptr<hhbm::ui::SoundEditor> soundEditor;
-    juce::TextButton profileBtn;
+    juce::TextButton profileBtn, projectBtn, audioBtn;
+    juce::ToggleButton loopBtn { "Loop" };
+    std::unique_ptr<APVTS::ButtonAttachment> loopAtt;
+    juce::Label posLbl, kbdLbl, kbdInfo;
+    juce::ComboBox kbdBox;
+    std::unique_ptr<APVTS::ComboBoxAttachment> kbdAtt;
+    int lastRenderCount = 0, kbdFlash = 0, lastNoteSeen = -1;
     std::unique_ptr<juce::AlertWindow> alert;
     bool styleDialogOpen = false;
     int lastVersion = -1;

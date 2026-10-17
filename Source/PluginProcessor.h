@@ -102,6 +102,24 @@ public:
     std::atomic<double> uiBeat { -1.0 };
     std::atomic<double> hostBpm { 0.0 };
     std::atomic<int> patternVersion { 0 };
+    std::atomic<int> lastLiveNote { -1 };  // for the UI (keyboard activity)
+
+    /** Restarts the internal transport at the first beat. */
+    void restartPreview() { restartRequested = true; previewPlaying = true; }
+
+    // ------------------------------------------------------------ audio export
+    /** Renders mix and/or stems to WAV (48 kHz / 24 bit) on a background thread. */
+    bool startAudioRender (bool fullSong, bool mix, bool stems);
+    std::atomic<bool> renderBusy { false };
+    std::atomic<float> renderProgress { 0.0f };
+    std::atomic<int> renderCounter { 0 };
+    juce::File lastRenderFolder() const { const juce::SpinLock::ScopedLockType l (renderLock); return renderFolder; }
+
+    // ------------------------------------------------------------ projects
+    bool saveProject (const juce::File& f);
+    bool loadProject (const juce::File& f);
+    static juce::File projectFolder();
+    juce::File currentProject;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
@@ -113,11 +131,21 @@ private:
 
     struct Event
     {
-        double beat;
+        double beat;        // live events: sample offset in the block
         int track, pitch;
         float vel;
         bool on;
+        bool live = false;  // from the MIDI keyboard
     };
+    std::vector<Event> live;
+    std::atomic<bool> restartRequested { false };
+    juce::File renderAudioNow (bool fullSong, bool mix, bool stems);
+    juce::ThreadPool renderPool { 1 };
+    mutable juce::SpinLock renderLock;
+    juce::File renderFolder;
+    void applyParams (hhbm::SynthEngine& e) const;
+    int keyboardTrack (int midiChannel) const;
+    bool soundOnParam() const { return pSound->load() > 0.5f; }
 
     struct Compiled
     {
@@ -151,6 +179,8 @@ private:
     std::atomic<float>* pBpm = nullptr;
     std::atomic<float>* pSound = nullptr;
     std::atomic<float>* pMidiOut = nullptr;
+    std::atomic<float>* pLoop = nullptr;
+    std::atomic<float>* pKbd = nullptr;
     std::array<std::atomic<float>*, hhbm::numTracks> pVol {}, pMute {};
     struct SampleParamPtrs { std::atomic<float>* root = nullptr, *fine = nullptr, *att = nullptr, *rel = nullptr, *loop = nullptr, *ls = nullptr, *le = nullptr; };
     std::array<SampleParamPtrs, hhbm::numTracks> pSmp {};
