@@ -64,7 +64,8 @@ MIDI-Kanäle: Drums 10 (GM-Mapping: Kick 36, Snare 38, Clap 39, HH 42, OH 46, Ri
 Hinweis 432 Hz: Der MIDI-Export enthält nur Noten – für 432 Hz das Ziel-Instrument in Cubase auf A = 432 Hz stimmen.
 
 ## Build
-Automatisch über GitHub Actions (Tab *Actions* → Artefakte herunterladen). Release: Tag `v*` pushen.
+Automatisch über GitHub Actions. **Download:** Repo-Startseite → rechts **Releases → „Neueste Version"** (wird bei jedem Push aktualisiert).
+Feste Versionen: Tag `v*` pushen.
 
 Lokal:
 ```bash

@@ -64,6 +64,30 @@ jobs:
           name: HipHopBeatMaker-${{ matrix.name }}
           path: HipHopBeatMaker-${{ matrix.name }}.zip
 
+  # Rolling "latest" release: every push to main replaces the downloads
+  latest:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish "Neueste Version"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
+          gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
+            --title "Neueste Version ($(date -u +%Y-%m-%d) · ${GITHUB_SHA::7})" \
+            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS: VST3 + AU + Standalone (.app)." \
+            --latest
+
+  # Versioned release when a tag v* is pushed
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
