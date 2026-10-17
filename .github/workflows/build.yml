@@ -35,7 +35,7 @@ jobs:
 
       - name: Configure (macOS universal)
         if: runner.os == 'macOS'
-        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
       - name: Build
         run: cmake --build build --config Release --parallel 4
@@ -51,7 +51,11 @@ jobs:
             lipo -info "$b"
             lipo -info "$b" | grep -q x86_64
             lipo -info "$b" | grep -q arm64
+            # minimum macOS of the binary must be 11.x
+            vtool -show-build -arch x86_64 "$b" | grep -E "minos|version" | head -3
+            vtool -show-build -arch x86_64 "$b" | grep -q "minos 11\."
           done
+          /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "build/HipHopBeatMaker_artefacts/Release/Standalone/Hip-Hop BeatMaker.app/Contents/Info.plist"
 
       - name: Package
         shell: bash
@@ -97,7 +101,7 @@ jobs:
           gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
           gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
             --title "Neueste Version ($(date -u +%Y-%m-%d) · ${GITHUB_SHA::7})" \
-            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS (Universal: Intel + Apple Silicon, ab macOS 10.13): VST3 + AU + Standalone (.app)." \
+            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS (Universal: Intel + Apple Silicon, ab macOS 11): VST3 + AU + Standalone (.app)." \
             --latest
 
   # Versioned release when a tag v* is pushed
