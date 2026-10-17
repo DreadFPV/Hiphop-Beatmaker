@@ -87,10 +87,18 @@ struct Harmony
     }
 };
 
-int autoProgression (int style)
+int autoProgression (int style, int seed)
 {
-    static const int p[] = { 3, 1, 6, 4, 5 }; // BoomBap, Trap, Drill, LoFi, GFunk
-    return p[style];
+    // style-typical progressions; the seed picks one of them
+    static const std::vector<int> pools[] = {
+        { 3, 1, 6, 2 },   // Boom Bap
+        { 1, 5, 2, 6 },   // Trap
+        { 6, 3, 1, 5 },   // Drill
+        { 4, 1, 3 },      // Lo-Fi
+        { 5, 2, 1 },      // G-Funk
+    };
+    const auto& pool = pools[style];
+    return pool[mix ((uint32_t) seed, 909u, (uint32_t) style) % pool.size()];
 }
 
 // ============================================================ drum patterns
@@ -154,7 +162,7 @@ public:
         const int bars = Generator::sectionBars (section);
         const double len = bars * barLen;
 
-        auto prog = progressionDegrees (set.progression == 0 ? autoProgression (set.style) : set.progression);
+        auto prog = progressionDegrees (set.progression == 0 ? autoProgression (set.style, set.seed) : set.progression);
         std::vector<int> chordPerBar;
         for (int b = 0; b < bars; ++b)
         {
@@ -547,12 +555,51 @@ private:
         const bool hookish = section == (int) Section::Hook || section == (int) Section::Bridge || section == (int) Section::Intro;
         if (! always && ! hookish) return;
 
+        // sound of the pad part depends on the seed (same for every section of a song)
+        Rng r (mix ((uint32_t) set.seed, 606u + (uint32_t) set.style));
+        const int size   = r.chance (0.35f + 0.4f * set.variation) ? 4 : 3;   // add the 7th
+        const int center = 54 + r.range (0, 8);                                // register
+        const bool open  = r.chance (0.4f);                                   // spread voicing
+        const bool bassNote = r.chance (0.3f);                                // root an octave below
+        const int rhythm = r.range (0, 4);
+        // 0 whole bar · 1 two halves · 2 long + push into next bar · 3 anticipated by an 8th · 4 dotted swells
+
         const float vel = st == Style::LoFi ? 0.45f : 0.6f;
+        auto chord = [&] (int degree)
+        {
+            auto v = harm.voice (degree, size, center);
+            if (open && v.size() >= 3) v[1] += 12;          // drop-2 style spread
+            if (bassNote) v.push_back (v.front() - 12);
+            std::sort (v.begin(), v.end());
+            return v;
+        };
+        auto add = [&] (int degree, double start, double len, float vv)
+        {
+            for (auto p : chord (degree))
+                out.push_back ({ p, start, len, vv });
+        };
+
         for (int bar = 0; bar < bars; ++bar)
         {
-            const auto v = harm.voice (chords[(size_t) bar], 3, 58);
-            for (auto p : v)
-                out.push_back ({ p, bar * barLen, barLen - 0.02, vel });
+            const int deg = chords[(size_t) bar];
+            const int next = chords[(size_t) ((bar + 1) % bars)];
+            const double b = bar * barLen;
+            switch (rhythm)
+            {
+                case 0: add (deg, b, barLen - 0.02, vel); break;
+                case 1: add (deg, b, 1.95, vel); add (deg, b + 2.0, 1.95, vel * 0.85f); break;
+                case 2:
+                    add (deg, b, 3.45, vel);
+                    if (bar < bars - 1) add (next, b + 3.5, 0.45, vel * 0.8f);
+                    break;
+                case 3:
+                    // chord change arrives an 8th early (except the very first bar)
+                    add (deg, bar == 0 ? b : b - 0.5, bar == 0 ? 3.48 : 3.98, vel);
+                    break;
+                default:
+                    add (deg, b, 1.45, vel); add (deg, b + 1.5, 1.45, vel * 0.8f); add (deg, b + 3.0, 0.95, vel * 0.7f);
+                    break;
+            }
         }
     }
 

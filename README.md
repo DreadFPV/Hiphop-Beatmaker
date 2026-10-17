@@ -13,7 +13,7 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
 | G-Funk | 94 | funky Synth-Bass, Rhodes-Offbeats, Portamento-Whine-Lead |
 
 ## Bedienung
-- **Style, Key, Scale, Chords** (Akkordfolge), **Tuning 440/432 Hz**
+- **Style, Key, Scale, Chords** (Akkordfolge – bei „Auto (Style)" wählt der Seed eine style-typische Folge), **Tuning 440/432 Hz**
 - **Sections:** Intro · Verse · Hook · Bridge · Outro · Full Song (Intro–Verse–Hook–Verse–Hook–Bridge–Hook–Outro)
 - **Swing, Variation, Humanize, Seed** – „Neu würfeln" erzeugt eine neue Variante
 - **Play** = Vorhören ohne Host. Läuft Cubase, folgt das Plugin dem Host-Transport und Tempo.

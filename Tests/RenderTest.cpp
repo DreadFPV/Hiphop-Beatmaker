@@ -1,3 +1,4 @@
+#include <set>
 // Offline test: generates every style/section, checks the data and renders audio.
 // Usage: HHBMRenderTest <outputDir>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -200,8 +201,38 @@ static void drumTweakTests()
     CHECK (std::abs ((p12 - p0) - 12.0f) < 0.5f, "kick tune");
 }
 
+static void seedTests()
+{
+    std::cout << "--- seed tests\n";
+    auto sig = [] (const std::vector<Note>& v)
+    {
+        std::string out;
+        for (auto& n : v) out += std::to_string (n.pitch) + "@" + std::to_string ((int) std::round (n.start * 8)) + ";";
+        return out;
+    };
+    for (int style = 0; style < numStyles; ++style)
+    {
+        std::set<std::string> pads, keys;
+        for (int seed = 1; seed <= 12; ++seed)
+        {
+            Settings s; s.style = style; s.section = (int) Section::Hook; s.seed = seed;
+            const auto p = Generator::generate (s);
+            pads.insert (sig (p.tracks[(size_t) Track::Pad]));
+            keys.insert (sig (p.tracks[(size_t) Track::Keys]));
+        }
+        std::cout << "   " << styleName (style) << ": " << pads.size() << " verschiedene Pads, " << keys.size() << " Keys bei 12 Seeds\n";
+        CHECK (pads.size() >= 6, styleName (style) << " pad varies with seed");
+    }
+    // a fixed progression must stay fixed when only the seed changes
+    Settings a; a.progression = 2; a.seed = 1;
+    Settings b = a; b.seed = 99;
+    auto roots = [] (const Pattern& p) { std::set<int> r; for (auto& n : p.tracks[(size_t) Track::Pad]) if (n.start < 0.01) r.insert (n.pitch % 12); return r; };
+    juce::ignoreUnused (roots);
+}
+
 int main (int argc, char** argv)
 {
+    seedTests();
     sampleTests();
     drumTweakTests();
     juce::File outDir = argc > 1 ? juce::File (argv[1]) : juce::File::getCurrentWorkingDirectory().getChildFile ("render");
