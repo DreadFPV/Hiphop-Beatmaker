@@ -40,6 +40,19 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
+      - name: Check architectures (Intel + Apple Silicon)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          for b in "build/HipHopBeatMaker_artefacts/Release/Standalone/Hip-Hop BeatMaker.app/Contents/MacOS/Hip-Hop BeatMaker" \
+                   "build/HipHopBeatMaker_artefacts/Release/VST3/Hip-Hop BeatMaker.vst3/Contents/MacOS/Hip-Hop BeatMaker" \
+                   "build/HipHopBeatMaker_artefacts/Release/AU/Hip-Hop BeatMaker.component/Contents/MacOS/Hip-Hop BeatMaker"; do
+            lipo -info "$b"
+            lipo -info "$b" | grep -q x86_64
+            lipo -info "$b" | grep -q arm64
+          done
+
       - name: Package
         shell: bash
         run: |
@@ -84,7 +97,7 @@ jobs:
           gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
           gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
             --title "Neueste Version ($(date -u +%Y-%m-%d) · ${GITHUB_SHA::7})" \
-            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS: VST3 + AU + Standalone (.app)." \
+            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS (Universal: Intel + Apple Silicon, ab macOS 10.13): VST3 + AU + Standalone (.app)." \
             --latest
 
   # Versioned release when a tag v* is pushed
