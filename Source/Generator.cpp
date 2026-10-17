@@ -96,6 +96,10 @@ int autoProgression (int style, int seed)
         { 6, 3, 1, 5 },   // Drill
         { 4, 1, 3 },      // Lo-Fi
         { 5, 2, 1 },      // G-Funk
+        { 1, 3, 5 },      // Drum & Bass
+        { 6, 2, 1 },      // Neurofunk
+        { 4, 1, 3 },      // Liquid
+        { 5, 2, 6 },      // Jungle
     };
     const auto& pool = pools[style];
     return pool[mix ((uint32_t) seed, 909u, (uint32_t) style) % pool.size()];
@@ -145,6 +149,35 @@ std::vector<DrumLine> drumLines (Style st)
             { ClosedHat, "xoxoxoxoxoxoxoxo", "xoxoxoxoxoxoxo?o", 0.65f },
             { OpenHat,   "..............?.", "..............x.", 0.50f },
             { Shaker,    ".?.?.?.?.?.?.?.?", ".?.?.?.?.?.?.?.?", 0.30f } };
+
+        case Style::DnB: return {
+            { Kick,      "x.........x.....", "x.........x...x.", 1.00f },
+            { Snare,     "....x..o....x..o", "....x..o....x.xx", 0.95f },
+            { ClosedHat, "x.x.x.x.x.x.x.x.", "x.x.x.x.x.x.xxxx", 0.60f },
+            { OpenHat,   "..?.......?.....", "..x.......?.....", 0.45f },
+            { Shaker,    ".?.?.?.?.?.?.?.?", ".x.x.x.x.x.x.x.x", 0.30f } };
+
+        case Style::Neuro: return {
+            { Kick,      "x.........x.....", "x.........x..x..", 1.00f },
+            { Snare,     "....x.......x...", "....x.......x.xx", 1.00f },
+            { Clap,      "....x.......x...", "....x.......x...", 0.60f },
+            { ClosedHat, "x.x.x.x.x.x.x.x.", "x.xxx.x.x.xxx.xx", 0.55f },
+            { Rim,       "......x.....?...", "...?..x.....x...", 0.50f },
+            { OpenHat,   "..?...........?.", "..x...........x.", 0.40f } };
+
+        case Style::Liquid: return {
+            { Kick,      "x.........x.....", "x......x..x.....", 0.90f },
+            { Snare,     "....x.......x...", "....x.......x..o", 0.80f },
+            { ClosedHat, "x?x?x?x?x?x?x?x?", "x?x?x?x?x?x?x?xx", 0.45f },
+            { Shaker,    "?.?.?.?.?.?.?.?.", ".?.?.?.?.?.?.?.?", 0.30f },
+            { OpenHat,   "..............?.", "......?.......x.", 0.35f } };
+
+        case Style::Jungle: return {
+            { Kick,      "x.x.......xx....", "x.x.......x.....", 1.00f },
+            { Snare,     "....x..x.x..x..x", "....x..x.x..xx.x", 0.90f },
+            { ClosedHat, "x.x.x.x.x.x.x.x.", "x.x.x.x.xxx.x.x.", 0.55f },
+            { OpenHat,   "......?.......?.", "......x.......?.", 0.45f },
+            { Rim,       "?..?..?..?......", "?..?..?..?..?...", 0.40f } };
 
         default: break;
     }
@@ -215,7 +248,7 @@ private:
     // ---------------------------------------------------------------- groove
     double swingDelay() const
     {
-        static const float styleAmount[] = { 0.8f, 0.25f, 0.3f, 1.0f, 0.5f };
+        static const float styleAmount[] = { 0.8f, 0.25f, 0.3f, 1.0f, 0.5f, 0.1f, 0.05f, 0.3f, 0.2f };
         // MPC style: off-16th moves from 50% up to 75% of the 8th
         double f = 0.5 + 0.25 * set.swing * styleAmount[set.style];
         return (f - 0.5) * 0.5;
@@ -299,6 +332,18 @@ private:
             }
         }
 
+        // DnB family: snare roll into the next section
+        if (isDnbFamily (set.style) && section != (int) Section::Outro && bars >= 2)
+        {
+            const double b = (bars - 1) * barLen;
+            const int hits = set.variation > 0.5f ? 8 : 4;
+            for (int i = 0; i < hits; ++i)
+            {
+                const double pos = b + 4.0 - (hits - i) * 0.25;
+                out.push_back ({ Drum::Snare, pos, 0.12, 0.45f + 0.5f * (float) i / (float) hits });
+            }
+        }
+
         // crash on section start
         if (section == (int) Section::Hook || section == (int) Section::Outro
             || (section == (int) Section::Verse && occurrence > 0))
@@ -379,7 +424,32 @@ private:
             return true;
         };
 
-        if (st == Style::Trap || st == Style::Drill || st == Style::BoomBap)
+        if (st == Style::Neuro)
+        {
+            static const char* grooves[] = { "x..x..x.x.x..x.x", "x.x..x...x.x..x.", "xx..x..x..x.x..x" };
+            const char* g = grooves[r.range (0, 2)];
+            for (int bar = 0; bar < bars; ++bar)
+            {
+                if (! activeBar (bar)) continue;
+                const int root = rootOf (bar);
+                for (int s16 = 0; s16 < 16; ++s16)
+                {
+                    if (g[s16] != 'x') continue;
+                    int p = root;
+                    const float c = r.uni();
+                    if (s16 > 0)
+                    {
+                        if (c < 0.25f * (0.5f + set.variation)) p = root + 12;
+                        else if (c < 0.35f * (0.5f + set.variation)) p = root + 1;   // dark b2
+                        else if (c < 0.45f * (0.5f + set.variation)) p = root + 7;
+                    }
+                    const bool longNote = s16 == 0 || r.chance (0.15f);
+                    out.push_back ({ p, bar * barLen + s16 * stepLen, longNote ? 0.7 : 0.2, s16 % 4 == 0 ? 1.0f : 0.8f });
+                }
+            }
+        }
+        else if (st == Style::Trap || st == Style::Drill || st == Style::BoomBap
+                 || st == Style::DnB || st == Style::Liquid || st == Style::Jungle)
         {
             // bass follows the kick
             std::vector<double> kicks;
@@ -417,7 +487,7 @@ private:
                 }
 
                 // 808 glide: overlap into the next note
-                bool glide = is808 && (i + 1 < kicks.size()) && r.chance (st == Style::Drill ? 0.45f : 0.2f) && set.variation > 0.1f;
+                bool glide = is808 && (i + 1 < kicks.size()) && r.chance (st == Style::Drill ? 0.45f : (st == Style::Liquid ? 0.3f : 0.2f)) && set.variation > 0.1f;
                 if (glide) len += 0.12;
 
                 out.push_back ({ pitch, start, std::max (0.1, len), 0.95f });
@@ -481,6 +551,8 @@ private:
         {
             case Style::LoFi:    return set.variation > 0.5f ? 5 : 4;
             case Style::GFunk:   return 4;
+            case Style::Liquid:  return set.variation > 0.5f ? 5 : 4;
+            case Style::Neuro:   return 2;
             case Style::BoomBap: return set.variation > 0.6f ? 4 : 3;
             default:             return 3;
         }
@@ -493,7 +565,7 @@ private:
 
         auto active = [&] (int bar)
         {
-            if (section == (int) Section::Bridge) return st == Style::LoFi || st == Style::GFunk || bar % 2 == 0;
+            if (section == (int) Section::Bridge) return st == Style::LoFi || st == Style::GFunk || st == Style::Liquid || bar % 2 == 0;
             return true;
         };
 
@@ -548,6 +620,28 @@ private:
                     if (r.chance (0.3f + 0.5f * set.variation))
                         chordAt (b + 2.5, 1.4, 0.5f, 0.025);
                     break;
+                case Style::DnB:
+                {
+                    static const char* rh[] = { "x.....x...x.....", "x.........x.....", "......x.....x..." };
+                    const char* p = rh[(bar + r.range (0, 2)) % 3];
+                    for (int s16 = 0; s16 < 16; ++s16)
+                        if (p[s16] == 'x') chordAt (b + s16 * stepLen, 0.45, 0.6f, 0.0);
+                    break;
+                }
+                case Style::Neuro:
+                {
+                    static const char* p = "..x....x..x.....";
+                    for (int s16 = 0; s16 < 16; ++s16)
+                        if (p[s16] == 'x' && r.chance (0.5f + 0.4f * set.variation))
+                            chordAt (b + s16 * stepLen, 0.2, 0.7f, 0.0);
+                    break;
+                }
+                case Style::Liquid:
+                    chordAt (b, 2.6, 0.55f, 0.02);
+                    if (r.chance (0.4f + 0.4f * set.variation))
+                        chordAt (b + 2.75, 1.2, 0.45f, 0.02);
+                    break;
+                case Style::Jungle:
                 case Style::GFunk:
                 {
                     static const char* p = "..x...x...x...x.";
@@ -564,7 +658,7 @@ private:
     // ---------------------------------------------------------------- pad
     void pad (std::vector<Note>& out, int section, int bars, const std::vector<int>& chords)
     {
-        const bool always = st == Style::Trap || st == Style::Drill || st == Style::LoFi;
+        const bool always = st == Style::Trap || st == Style::Drill || st == Style::LoFi || isDnbFamily (set.style);
         const bool hookish = section == (int) Section::Hook || section == (int) Section::Bridge || section == (int) Section::Intro;
         if (! always && ! hookish) return;
 
@@ -577,7 +671,7 @@ private:
         const int rhythm = r.range (0, 4);
         // 0 whole bar · 1 two halves · 2 long + push into next bar · 3 anticipated by an 8th · 4 dotted swells
 
-        const float vel = st == Style::LoFi ? 0.45f : 0.6f;
+        const float vel = (st == Style::LoFi || st == Style::Liquid) ? 0.45f : 0.6f;
         auto chord = [&] (int degree)
         {
             auto v = harm.voice (degree, size, center);
@@ -625,7 +719,8 @@ private:
             switch ((Section) section)
             {
                 case Section::Intro:  return (st == Style::Trap || st == Style::Drill) ? true : bar >= bars / 2;
-                case Section::Verse:  return st == Style::Trap || st == Style::Drill || (st == Style::GFunk && bar % 4 == 3);
+                case Section::Verse:  return st == Style::Trap || st == Style::Drill || st == Style::Liquid
+                                             || ((st == Style::GFunk || st == Style::DnB || st == Style::Neuro || st == Style::Jungle) && bar % 4 == 3);
                 case Section::Hook:   return true;
                 case Section::Bridge: return bar % 2 == 0;
                 case Section::Outro:  return bar < bars / 2;
@@ -636,12 +731,16 @@ private:
         // motif depends only on seed + style, so every hook sounds like the same song
         Rng r (mix ((uint32_t) set.seed, 404u + (uint32_t) set.style));
 
-        static const char* rhythms[5][3] = {
+        static const char* rhythms[numStyles][3] = {
             { "x.....x.....x...", "x.......x..x....", "x..x......x....." },   // BoomBap: sparse horn/flute
             { "x.x.x..x.x.x.x..", "x..x..x.x.x..x..", "x.xx..x.x..x.x.x" },   // Trap: bells
             { "x..x..x...x.x...", "x..x..x.x..x....", "x.....x.x..x..x." },   // Drill
             { "x.......x.......", "x.....x.......x.", "x...........x..." },   // LoFi
             { "x...........x...", "x.......x.......", "x.....x.....x..." },   // GFunk: long whines
+            { "x.x.x.x.x.x.x.x.", "x..x..x.x..x..x.", "x...x.x...x.x..." },   // DnB: plucks / arps
+            { "x......x..x.....", "x.....x.....x...", "x..x......x....." },   // Neuro: sci-fi stabs
+            { "x.......x...x...", "x...........x...", "x.....x.......x." },   // Liquid: soft melody
+            { "x...x.......x...", "x.x.....x.......", "x.....x.x......." },   // Jungle: horn stabs
         };
 
         struct MotifNote { int step; int degOffset; };
@@ -663,7 +762,7 @@ private:
             }
         }
 
-        const int base = (st == Style::BoomBap || st == Style::LoFi) ? 60 : 72;
+        const int base = (st == Style::BoomBap || st == Style::LoFi || st == Style::Jungle) ? 60 : 72;
 
         for (int bar = 0; bar < bars; ++bar)
         {
@@ -687,12 +786,13 @@ private:
                 double len = end - start;
                 if (st == Style::BoomBap) len = std::min (len, 1.0);
                 if (st == Style::Trap)    len = std::min (len, 0.75);
+                if (st == Style::DnB || st == Style::Neuro || st == Style::Jungle) len = std::min (len, 0.5);
 
                 int pitch = harm.degToMidi (chordDeg + m[i].degOffset, base);
                 while (pitch > base + 19) pitch -= 12;
                 while (pitch < base - 5) pitch += 12;
 
-                const bool legato = st == Style::GFunk || st == Style::Drill;
+                const bool legato = st == Style::GFunk || st == Style::Drill || st == Style::Liquid;
                 out.push_back ({ pitch, start, legato ? len + 0.05 : len * 0.92, i == 0 ? 0.85f : 0.72f });
             }
         }

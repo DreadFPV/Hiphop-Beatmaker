@@ -74,6 +74,10 @@ public:
 
     static juce::File presetsRoot();
     static juce::File profileFolder();
+    static juce::File autoBackupFolder();
+    static juce::String safeFileNameFor (const juce::String& name);
+    void saveAutoBackup (int sourceStyle);
+    juce::Time lastAutoBackup;
     static juce::File instrumentFolder (int track);
 
     /** Whole sound (all instruments + drums) as a profile file. */

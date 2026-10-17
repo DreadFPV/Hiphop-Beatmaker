@@ -281,8 +281,11 @@ float DrumVoice::synth()
     {
         case 0: // kick
         {
-            const float decay = is808 ? 0.22f : (style == (int) Style::LoFi ? 0.28f : (style == (int) Style::GFunk ? 0.4f : 0.34f));
+            const bool dnb = isDnbFamily (style);
+            const float decay = is808 ? 0.22f : (dnb ? (style == (int) Style::Neuro ? 0.16f : 0.2f)
+                                : (style == (int) Style::LoFi ? 0.28f : (style == (int) Style::GFunk ? 0.4f : 0.34f)));
             const float f = is808 ? (52.0f + 210.0f * std::exp (-time / 0.018f))
+                          : dnb   ? (56.0f + 180.0f * std::exp (-time / 0.022f))
                                   : (48.0f + 130.0f * std::exp (-time / 0.035f));
             phase += f * ratio / sr;
             if (phase >= 1) phase -= 1;
@@ -295,10 +298,11 @@ float DrumVoice::synth()
         }
         case 1: // snare
         {
-            phase += (185.0f + 60.0f * std::exp (-time / 0.01f)) * ratio / sr;
+            phase += ((isDnbFamily (style) ? 215.0f : 185.0f) + 60.0f * std::exp (-time / 0.01f)) * ratio / sr;
             if (phase >= 1) phase -= 1;
             const float tone = std::sin (twoPi * phase) * std::exp (-time / 0.05f) * 0.6f;
-            const float nz = f1.hp (noise.next()) * std::exp (-time / (style == (int) Style::LoFi ? 0.11f : 0.16f));
+            const float nz = f1.hp (noise.next()) * std::exp (-time / (style == (int) Style::LoFi ? 0.11f : (isDnbFamily (style) ? 0.13f : 0.16f)))
+                             * (isDnbFamily (style) ? 1.3f : 1.0f);
             out = (tone + nz) * 0.75f;
             end = 0.7f;
             break;
@@ -441,6 +445,33 @@ Patch SynthEngine::stylePatch (int style, int track)
             l.osc = Patch::Fm; l.fmRatio = 1; l.fmIndex = 0.6f; l.fmDecay = 1.0f; l.att = 0.01f; l.dec = 0.8f; l.sus = 0.3f; l.rel = 0.3f; l.cutoff = 2500; l.gain = 0.25f;
             k.osc = Patch::Fm; k.fmRatio = 1; k.fmIndex = 1.0f; k.fmDecay = 0.6f; k.tremolo = 0.25f; k.att = 0.003f; k.dec = 2.0f; k.sus = 0.2f; k.rel = 0.4f; k.cutoff = 2200; k.gain = 0.16f;
             p.cutoff = 900;
+            break;
+        case Style::DnB:
+            b.osc = Patch::Sine; b.drive = 0.35f; b.att = 0.003f; b.dec = 0.9f; b.sus = 0.75f; b.rel = 0.1f; b.glide = 0.03f; b.cutoff = 3000; b.gain = 0.8f;
+            l.osc = Patch::Fm; l.fmRatio = 2.0f; l.fmIndex = 1.8f; l.fmDecay = 0.25f; l.att = 0.002f; l.dec = 0.4f; l.sus = 0.0f; l.rel = 0.2f; l.cutoff = 6000; l.gain = 0.26f;
+            k.osc = Patch::Fm; k.fmRatio = 1; k.fmIndex = 1.4f; k.fmDecay = 0.3f; k.att = 0.002f; k.dec = 0.6f; k.sus = 0.1f; k.rel = 0.25f; k.cutoff = 3500; k.gain = 0.18f;
+            p.cutoff = 2200;
+            break;
+        case Style::Neuro:
+            // reese / growl bass
+            b.osc = Patch::Saw; b.unison = 3; b.detune = 18; b.cutoff = 380; b.envToCutoff = 3.0f; b.q = 2.5f; b.drive = 0.8f;
+            b.att = 0.002f; b.dec = 0.25f; b.sus = 0.4f; b.rel = 0.06f; b.subLevel = 0.6f; b.gain = 0.6f;
+            l.osc = Patch::Saw; l.unison = 2; l.detune = 25; l.cutoff = 2000; l.q = 1.2f; l.glide = 0.03f; l.vibratoDepth = 0.1f;
+            l.att = 0.005f; l.dec = 0.3f; l.sus = 0.5f; l.rel = 0.15f; l.gain = 0.26f;
+            k.osc = Patch::Square; k.cutoff = 1500; k.envToCutoff = 2.0f; k.q = 1.5f; k.drive = 0.4f; k.att = 0.001f; k.dec = 0.2f; k.sus = 0.0f; k.rel = 0.08f; k.gain = 0.22f;
+            p.cutoff = 900;
+            break;
+        case Style::Liquid:
+            b.osc = Patch::Triangle; b.cutoff = 600; b.att = 0.01f; b.dec = 1.0f; b.sus = 0.7f; b.rel = 0.2f; b.glide = 0.04f; b.gain = 0.85f;
+            l.osc = Patch::Triangle; l.vibratoDepth = 0.15f; l.vibratoRate = 5.0f; l.att = 0.03f; l.dec = 0.5f; l.sus = 0.7f; l.rel = 0.4f; l.cutoff = 3500; l.glide = 0.05f; l.gain = 0.25f;
+            k.osc = Patch::Fm; k.fmRatio = 1; k.fmIndex = 1.0f; k.fmDecay = 0.6f; k.tremolo = 0.2f; k.att = 0.003f; k.dec = 2.0f; k.sus = 0.25f; k.rel = 0.5f; k.cutoff = 2600; k.gain = 0.16f;
+            p.cutoff = 1600;
+            break;
+        case Style::Jungle:
+            b.osc = Patch::Sine; b.drive = 0.25f; b.att = 0.004f; b.dec = 1.2f; b.sus = 0.6f; b.rel = 0.15f; b.cutoff = 2000; b.gain = 0.8f;
+            l.osc = Patch::Square; l.cutoff = 2500; l.q = 0.9f; l.att = 0.02f; l.dec = 0.3f; l.sus = 0.6f; l.rel = 0.15f; l.gain = 0.16f;
+            k.osc = Patch::Fm; k.fmRatio = 2.0f; k.fmIndex = 0.8f; k.fmDecay = 0.15f; k.att = 0.001f; k.dec = 0.15f; k.sus = 0.0f; k.rel = 0.06f; k.cutoff = 5000; k.gain = 0.18f;
+            p.cutoff = 1400;
             break;
         case Style::GFunk:
         default:

@@ -8,7 +8,7 @@
 namespace hhbm
 {
 // ---------------------------------------------------------------- enums
-enum class Style   { BoomBap = 0, Trap, Drill, LoFi, GFunk, count };
+enum class Style   { BoomBap = 0, Trap, Drill, LoFi, GFunk, DnB, Neuro, Liquid, Jungle, count };
 enum class Section { Intro = 0, Verse, Hook, Bridge, Outro, FullSong, count };
 enum class Track   { Drums = 0, Bass, Keys, Pad, Lead, count };
 
@@ -18,7 +18,7 @@ constexpr int numTracks   = (int) Track::count;
 
 inline const char* styleName (int i)
 {
-    static const char* n[] = { "Boom Bap", "Trap", "Drill", "Lo-Fi", "G-Funk" };
+    static const char* n[] = { "Boom Bap", "Trap", "Drill", "Lo-Fi", "G-Funk", "Drum & Bass", "Neurofunk", "Liquid DnB", "Jungle" };
     return n[i];
 }
 
@@ -126,6 +126,9 @@ inline int drumNoteToSlot (int note)
 }
 
 // ---------------------------------------------------------------- pattern data
+/** Drum & Bass family (174 BPM breakbeat styles). */
+inline bool isDnbFamily (int style) { return style >= (int) Style::DnB && style <= (int) Style::Jungle; }
+
 struct Note
 {
     int pitch = 60;
@@ -173,7 +176,7 @@ struct Settings
 
 inline double defaultBpm (int style)
 {
-    static const double b[] = { 90.0, 140.0, 142.0, 80.0, 94.0 };
+    static const double b[] = { 90.0, 140.0, 142.0, 80.0, 94.0, 174.0, 174.0, 174.0, 165.0 };
     return b[style];
 }
 } // namespace hhbm

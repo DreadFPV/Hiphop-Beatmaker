@@ -70,6 +70,7 @@ jobs:
             cp -R build/HipHopBeatMaker_artefacts/Release/Standalone/* "$OUT/"
           fi
           cp README.md "$OUT/"
+          cp Docs/Bedienungsanleitung.pdf "$OUT/"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a "$OUT.zip" "$OUT" > /dev/null
           else
@@ -101,7 +102,7 @@ jobs:
           gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
           gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
             --title "Neueste Version ($(date -u +%Y-%m-%d) · ${GITHUB_SHA::7})" \
-            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). macOS (Universal: Intel + Apple Silicon, ab macOS 11): VST3 + AU + Standalone (.app)." \
+            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). Bedienungsanleitung (PDF) liegt in jedem ZIP. macOS (Universal: Intel + Apple Silicon, ab macOS 11): VST3 + AU + Standalone (.app)." \
             --latest
 
   # Versioned release when a tag v* is pushed

@@ -279,8 +279,7 @@ void HipHopBeatMakerProcessor::handleAsyncUpdate()
         else
         {
             // nobody to ask (automation): keep a backup, then load the style sound
-            saveProfile (juce::String ("Auto-Backup ") + styleName (soundOwner) + " "
-                         + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"), soundOwner);
+            saveAutoBackup (soundOwner);
             pendingStyleChange = {};
             loadStyleSound (style);
         }
@@ -1061,10 +1060,36 @@ bool HipHopBeatMakerProcessor::soundFromXml (const juce::XmlElement& xml, int sc
     return applied > 0;
 }
 
+juce::String HipHopBeatMakerProcessor::safeFileNameFor (const juce::String& name) { return juce::File::createLegalFileName (name.trim()); }
+
 static juce::String safeFileName (const juce::String& name)
 {
     auto n = juce::File::createLegalFileName (name.trim());
     return n.isEmpty() ? juce::String ("Preset") : n;
+}
+
+juce::File HipHopBeatMakerProcessor::autoBackupFolder()
+{
+    auto d = profileFolder().getChildFile ("Auto-Backups");
+    d.createDirectory();
+    return d;
+}
+
+void HipHopBeatMakerProcessor::saveAutoBackup (int sourceStyle)
+{
+    // at most one backup per minute (automation can switch styles very often), keep the newest 10
+    const auto now = juce::Time::getCurrentTime();
+    if (lastAutoBackup.toMilliseconds() != 0 && (now - lastAutoBackup).inSeconds() < 60.0) return;
+    lastAutoBackup = now;
+
+    auto f = autoBackupFolder().getChildFile (safeFileNameFor (juce::String (styleName (sourceStyle)) + " "
+                                                                + now.formatted ("%Y-%m-%d %H-%M-%S")) + ".hhsound");
+    if (auto xml = soundToXml (-1, sourceStyle)) xml->writeTo (f);
+
+    auto files = autoBackupFolder().findChildFiles (juce::File::findFiles, false, "*.hhsound");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+               { return a.getLastModificationTime() > b.getLastModificationTime(); });
+    for (int i = 10; i < files.size(); ++i) files[i].deleteFile();
 }
 
 juce::File HipHopBeatMakerProcessor::saveProfile (const juce::String& name, int sourceStyle)

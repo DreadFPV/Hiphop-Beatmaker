@@ -1,5 +1,7 @@
 # Hip-Hop BeatMaker
 
+📖 **Bedienungsanleitung:** [Docs/Bedienungsanleitung.pdf](Docs/Bedienungsanleitung.pdf) (liegt auch in jedem Download-ZIP)
+
 VST3 / AU / Standalone-Instrument (Windows & macOS) von **JustCreateit.ch**.
 Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum Vorhören und als **MIDI-Export pro Instrument**.
 
@@ -11,6 +13,10 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
 | Drill | 142 | Triolen-Hats, gleitende 808-Slides, dunkle Melodie |
 | Lo-Fi | 80 | starker Swing, Rhodes-Septakkorde/None, weiche Drums |
 | G-Funk | 94 | funky Synth-Bass, Rhodes-Offbeats, Portamento-Whine-Lead |
+| Drum & Bass | 174 | Two-Step, rollender Sub-Bass, Akkord-Stabs, Pluck-Arps, Snare-Rolls |
+| Neurofunk | 174 | harte Two-Step-Drums, Reese-/Growl-Bass in 16teln, dunkle Stabs |
+| Liquid DnB | 174 | weiche Drums, seidiger Sub, Rhodes-Akkorde, warme Pads |
+| Jungle | 165 | zerhackte Amen-Breaks, Dub-Sub, Offbeat-Skank, Horn-Stabs |
 
 ## Bedienung
 - **Style, Key, Scale, Chords** (Akkordfolge – bei „Auto (Style)" wählt der Seed eine style-typische Folge), **Tuning 440/432 Hz**
@@ -92,6 +98,8 @@ cmake --build build --target HHBMRenderTest HHBMProcessorTest
 ./build/HHBMRenderTest_artefacts/Release/HHBMRenderTest ./render
 ./build/HHBMProcessorTest_artefacts/Release/HHBMProcessorTest
 ```
+
+Anleitung neu erzeugen (Screenshots in `Docs/img`): `python3 Docs/make_manual.py`
 
 ## Installation
 - **Windows:** `Hip-Hop BeatMaker.vst3` nach `C:\Program Files\Common Files\VST3\`

@@ -908,8 +908,19 @@ void HipHopBeatMakerEditor::showProfileMenu()
     for (int i = 0; i < files.size(); ++i)
         m.addItem (100 + i, files[i].getFileNameWithoutExtension());
 
+    auto backups = HipHopBeatMakerProcessor::autoBackupFolder().findChildFiles (juce::File::findFiles, false, "*.hhsound");
+    std::sort (backups.begin(), backups.end(), [] (const juce::File& a, const juce::File& b)
+               { return a.getLastModificationTime() > b.getLastModificationTime(); });
+    juce::PopupMenu bm;
+    for (int i = 0; i < backups.size(); ++i)
+        bm.addItem (500 + i, backups[i].getFileNameWithoutExtension());
+    m.addSeparator();
+    m.addSubMenu ("Auto-Backups", bm, ! backups.isEmpty());
+    files.addArray (backups); // ids >= 500 index into the backup part
+    const int nProfiles = files.size() - backups.size();
+
     juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&profileBtn), [safe, files] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&profileBtn), [safe, files, nProfiles] (int r)
     {
         if (safe == nullptr || r == 0) return;
         const int style = (int) safe->proc.apvts.getRawParameterValue ("style")->load();
@@ -923,8 +934,12 @@ void HipHopBeatMakerEditor::showProfileMenu()
                            });
         else if (r == 2) safe->proc.loadStyleSound (style);
         else if (r == 3) HipHopBeatMakerProcessor::profileFolder().startAsProcess();
-        else if (r >= 100 && safe->proc.loadProfile (files[r - 100]))
-            safe->statusLbl.setText (U ("Profil geladen: ") + files[r - 100].getFileNameWithoutExtension(), juce::dontSendNotification);
+        else if (r >= 100)
+        {
+            const int idx = r >= 500 ? nProfiles + (r - 500) : r - 100;
+            if (idx < files.size() && safe->proc.loadProfile (files[idx]))
+                safe->statusLbl.setText (U ("Profil geladen: ") + files[idx].getFileNameWithoutExtension(), juce::dontSendNotification);
+        }
     });
 }
 
@@ -979,7 +994,7 @@ void HipHopBeatMakerEditor::showProjectMenu()
     juce::PopupMenu m;
     m.addItem (1, U ("Öffnen…"));
     m.addItem (2, "Speichern", proc.currentProject != juce::File());
-    m.addItem (3, "Speichern unter…");
+    m.addItem (3, U ("Speichern unter…"));
     m.addSeparator();
 
     auto files = HipHopBeatMakerProcessor::projectFolder().findChildFiles (juce::File::findFiles, false, "*.hhbeat");
@@ -1027,6 +1042,8 @@ void HipHopBeatMakerEditor::showStyleDialog()
 {
     const auto pending = proc.pendingStyleChange;
     if (pending.to < 0 || styleDialogOpen) return;
+    // wait until the style drop-down (a modal popup) has fully closed
+    if (juce::ModalComponentManager::getInstance()->getNumModalComponents() > 0) return;
     styleDialogOpen = true;
 
     const juce::String from (styleName (pending.from)), to (styleName (pending.to));
