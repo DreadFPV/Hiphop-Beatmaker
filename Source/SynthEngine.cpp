@@ -225,9 +225,12 @@ void Voice::render (float* outL, float* outR, int n)
 // ============================================================ DrumVoice
 static const float metallicFreqs[6] = { 205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f };
 
-void DrumVoice::start (int s, float v, int st, float rate, std::shared_ptr<const DrumSample> smp)
+void DrumVoice::start (int s, float v, int st, float rate, std::shared_ptr<const DrumSample> smp, const DrumTweak& tw)
 {
     slot = s; vel = v; style = st; sr = rate;
+    tweak = tw;
+    tweak.decay = juce::jlimit (0.1f, 8.0f, tweak.decay);
+    ratio = std::exp2 (tweak.tune / 12.0f);
     sample = std::move (smp);
     t = 0; phase = 0; gain = 1; chokeGain = 1;
     for (auto& m : mphase) m = 0;
@@ -238,19 +241,20 @@ void DrumVoice::start (int s, float v, int st, float rate, std::shared_ptr<const
     if (sample != nullptr)
     {
         samplePos = 0;
-        sampleInc = sample->sampleRate / sr;
+        sampleInc = sample->sampleRate / sr * ratio;
         return;
     }
 
+    const float tm = std::exp2 (tweak.tone * 1.5f) * std::sqrt (ratio); // filter colour
     switch (slot)
     {
-        case 1: f1.set (style == (int) Style::LoFi ? 2500.0f : 1500.0f, 0.7f, sr); break;  // snare HP
-        case 2: f1.set (1300, 1.6f, sr); break;    // clap BP
-        case 3: case 4: f1.set (7500, 0.8f, sr); f2.set (11000, 0.7f, sr); break; // hats HP + LP
-        case 5: f1.set (2000, 2.0f, sr); break;    // rim
-        case 6: f1.set (6500, 1.4f, sr); break;    // shaker
-        case 7: f1.set (4500, 0.7f, sr); break;    // crash
-        default: f1.set (style == (int) Style::LoFi ? 1800.0f : 9000.0f, 0.7f, sr); break; // kick tone LP
+        case 1: f1.set ((style == (int) Style::LoFi ? 2500.0f : 1500.0f) * tm, 0.7f, sr); break;  // snare HP
+        case 2: f1.set ((1300) * tm, 1.6f, sr); break;    // clap BP
+        case 3: case 4: f1.set ((7500) * tm, 0.8f, sr); f2.set ((11000) * tm, 0.7f, sr); break; // hats HP + LP
+        case 5: f1.set ((2000) * tm, 2.0f, sr); break;    // rim
+        case 6: f1.set ((6500) * tm, 1.4f, sr); break;    // shaker
+        case 7: f1.set ((4500) * tm, 0.7f, sr); break;    // crash
+        default: f1.set ((style == (int) Style::LoFi ? 1800.0f : 9000.0f) * tm, 0.7f, sr); break; // kick tone LP
     }
 }
 
@@ -259,7 +263,7 @@ float DrumVoice::metallic()
     float s = 0;
     for (int i = 0; i < 6; ++i)
     {
-        mphase[(size_t) i] += metallicFreqs[i] * 1.6f / sr;
+        mphase[(size_t) i] += metallicFreqs[i] * 1.6f * ratio / sr;
         if (mphase[(size_t) i] >= 1) mphase[(size_t) i] -= 1;
         s += mphase[(size_t) i] < 0.5f ? 1.0f : -1.0f;
     }
@@ -268,7 +272,8 @@ float DrumVoice::metallic()
 
 float DrumVoice::synth()
 {
-    const float time = t / sr;
+    const float realTime = t / sr;
+    const float time = realTime / tweak.decay; // envelope time (Decay stretches it)
     float out = 0, end = 1.0f;
     const bool is808 = style == (int) Style::Trap || style == (int) Style::Drill;
 
@@ -279,10 +284,10 @@ float DrumVoice::synth()
             const float decay = is808 ? 0.22f : (style == (int) Style::LoFi ? 0.28f : (style == (int) Style::GFunk ? 0.4f : 0.34f));
             const float f = is808 ? (52.0f + 210.0f * std::exp (-time / 0.018f))
                                   : (48.0f + 130.0f * std::exp (-time / 0.035f));
-            phase += f / sr;
+            phase += f * ratio / sr;
             if (phase >= 1) phase -= 1;
             out = std::sin (twoPi * phase) * std::exp (-time / decay);
-            out += noise.next() * std::exp (-time / 0.003f) * (style == (int) Style::LoFi ? 0.1f : 0.35f);
+            out += noise.next() * std::exp (-time / 0.003f) * (style == (int) Style::LoFi ? 0.1f : 0.35f) * (1.0f + tweak.tone);
             out = std::tanh (out * (style == (int) Style::BoomBap ? 2.2f : 1.5f));
             out = f1.lp (out) * 0.95f;
             end = 1.3f;
@@ -290,7 +295,7 @@ float DrumVoice::synth()
         }
         case 1: // snare
         {
-            phase += (185.0f + 60.0f * std::exp (-time / 0.01f)) / sr;
+            phase += (185.0f + 60.0f * std::exp (-time / 0.01f)) * ratio / sr;
             if (phase >= 1) phase -= 1;
             const float tone = std::sin (twoPi * phase) * std::exp (-time / 0.05f) * 0.6f;
             const float nz = f1.hp (noise.next()) * std::exp (-time / (style == (int) Style::LoFi ? 0.11f : 0.16f));
@@ -317,8 +322,8 @@ float DrumVoice::synth()
         }
         case 5: // rim
         {
-            out = std::sin (twoPi * 1700.0f * time) * std::exp (-time / 0.012f)
-                + std::sin (twoPi * 820.0f * time) * std::exp (-time / 0.02f) * 0.6f
+            out = std::sin (twoPi * 1700.0f * ratio * realTime) * std::exp (-time / 0.012f)
+                + std::sin (twoPi * 820.0f * ratio * realTime) * std::exp (-time / 0.02f) * 0.6f
                 + f1.bp (noise.next()) * std::exp (-time / 0.008f) * 0.4f;
             end = 0.25f;
             break;
@@ -365,11 +370,14 @@ void DrumVoice::render (float* l, float* r, int n)
             sL = read (0);
             sR = read (1);
             samplePos += sampleInc;
-            sL *= vel * 0.6f; sR *= vel * 0.6f;
+            float g = vel * 0.6f * tweak.level;
+            if (tweak.decay < 1.0f)
+                g *= std::exp (-(t / sr) / (0.4f * (float) (len / sample->sampleRate) * tweak.decay));
+            sL *= g; sR *= g;
         }
         else
         {
-            sL = sR = synth() * vel * slotGain[slot] * 0.55f;
+            sL = sR = synth() * vel * slotGain[slot] * 0.55f * tweak.level;
         }
 
         if (chokeGain < 1.0f)
@@ -395,17 +403,16 @@ void SynthEngine::prepare (double sampleRate, int blockSize)
     bass.voice.prepare (sr);
     lead.voice.prepare (sr);
     for (auto& d : drumVoices) d.active = false;
-    updatePatches();
+    for (int t = 1; t < numTracks; ++t)
+        patches[(size_t) t] = stylePatch (style, t);
 }
 
 void SynthEngine::setStyle (int s)
 {
-    if (s == style) return;
-    style = s;
-    updatePatches();
+    style = s; // drum synthesis flavour; tonal patches come from setPatch()
 }
 
-void SynthEngine::updatePatches()
+Patch SynthEngine::stylePatch (int style, int track)
 {
     Patch b, l, k, p;
 
@@ -450,7 +457,14 @@ void SynthEngine::updatePatches()
     // mix balance between the instruments
     b.gain *= 0.6f; k.gain *= 1.9f; l.gain *= 1.4f; p.gain *= 1.4f;
 
-    bassPatch = b; leadPatch = l; keysPatch = k; padPatch = p;
+    switch ((Track) track)
+    {
+        case Track::Bass: return b;
+        case Track::Keys: return k;
+        case Track::Pad:  return p;
+        case Track::Lead: return l;
+        default:          return {};
+    }
 }
 
 void SynthEngine::setSample (int slot, std::shared_ptr<const DrumSample> s)
@@ -506,14 +520,14 @@ void SynthEngine::noteOn (int track, int note, float velocity)
             for (auto& d : drumVoices)
                 if (! d.active) { target = &d; break; }
             if (target == nullptr) target = &drumVoices[counter % drumVoices.size()];
-            target->start (slot, velocity, style, (float) sr, getSample (slot));
+            target->start (slot, velocity, style, (float) sr, getSample (slot), drumTweaks[(size_t) slot]);
             break;
         }
         case Track::Bass:
         case Track::Lead:
         {
             auto& m = track == (int) Track::Bass ? bass : lead;
-            const auto& p = track == (int) Track::Bass ? bassPatch : leadPatch;
+            const auto& p = patches[(size_t) track];
             m.stack.erase (std::remove (m.stack.begin(), m.stack.end(), note), m.stack.end());
             m.stack.push_back (note);
             const bool legato = m.voice.active() && p.glide > 0 && m.stack.size() > 1;
@@ -528,7 +542,7 @@ void SynthEngine::noteOn (int track, int note, float velocity)
             auto& pool = track == (int) Track::Keys ? keys : pad;
             if (auto* v = findPolyVoice (pool))
             {
-                v->start (note, velocity, track == (int) Track::Keys ? keysPatch : padPatch, freqFor (note), false,
+                v->start (note, velocity, patches[(size_t) track], freqFor (note), false,
                           getInstrumentSample (track), instParams[(size_t) track]);
                 v->age = counter;
             }

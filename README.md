@@ -26,6 +26,24 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
   - 808-Glides funktionieren auch mit eigenem Sample (Trap/Drill)
   - Tuning 432 Hz wirkt auch auf Samples
 
+## Sound-Editor
+Button **„Sound"** neben jeder Spur öffnet den Editor (Tabs oben wechseln das Instrument):
+- **Bass, Keys, Pad, Lead – Synth:**
+  - Oszillator: Wellenform (Sine/Saw/Square/Triangle/FM), Unison, Detune, Sub, FM Ratio/Index/Decay
+  - Filter: Cutoff, Resonanz, Filter-Env, Keytrack, Drive
+  - Hüllkurve: Attack, Decay, Sustain, Release, Level
+  - Modulation: Glide, Vibrato, Vib-Rate, Pitch-Env, Pitch-Zeit, Tremolo
+  - Doppelklick auf einen Regler = Standardwert
+- **Sample-Tab:** eigenes Sample statt Synth (siehe oben)
+- **Drums:** pro Drum Tune, Decay, Tone, Level + Sample-Slot
+- **Presets ▾:** Instrument-Preset speichern/laden (`Dokumente/Hip-Hop BeatMaker/Presets/<Instrument>`)
+- **Style-Standard:** Instrument auf den Sound des aktuellen Styles zurücksetzen
+- **Sound-Profil ▾** (oben): kompletten Sound aller Instrumente speichern/laden (`Presets/Sound-Profile`)
+
+**Style-Wechsel:** Jeder Style lädt seinen eigenen Sound. Wurde der Sound verändert, fragt das Plugin vorher:
+*Speichern & laden* (eigenes Profil-File), *Nicht speichern* oder *Sound behalten*. Die Style-Standards selbst gehen nie verloren.
+Ohne geöffnetes Fenster (z. B. Automation) wird automatisch ein „Auto-Backup"-Profil angelegt.
+
 ## MIDI-Export
 - **„Drums MIDI ⇣" usw. in Cubase ziehen** → eine Spur pro Instrument
 - **„Alle Spuren ⇣"** → eine Type-1-Datei mit allen Spuren (+ Section-Marker bei Full Song)

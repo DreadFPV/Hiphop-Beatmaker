@@ -8,6 +8,7 @@
 #include "SynthEngine.h"
 #include "MidiExport.h"
 #include "SampleTools.h"
+#include "SoundParams.h"
 
 #include <bitset>
 
@@ -65,6 +66,31 @@ public:
     void clearInstrumentSample (int track);
     std::shared_ptr<const hhbm::SampleData> instrumentSample (int track) const { return engine.getInstrumentSample (track); }
     static bool trackTakesSample (int track) { return track > 0 && track < hhbm::numTracks; }
+    // ------------------------------------------------------------ sound design
+    /** Sets all synth + drum sound parameters to the built-in sound of a style. */
+    void loadStyleSound (int style);
+    /** true when the current sound differs from the built-in sound of 'style'. */
+    bool isSoundModified (int style) const;
+
+    static juce::File presetsRoot();
+    static juce::File profileFolder();
+    static juce::File instrumentFolder (int track);
+
+    /** Whole sound (all instruments + drums) as a profile file. */
+    juce::File saveProfile (const juce::String& name, int sourceStyle = -1);
+    bool loadProfile (const juce::File& f);
+    /** One instrument (track 0 = drum kit). */
+    juce::File saveInstrumentPreset (int track, const juce::String& name);
+    bool loadInstrumentPreset (int track, const juce::File& f);
+    void loadInstrumentStyleDefault (int track);
+
+    /** Style changed while the sound was modified: the editor asks the user what to do. */
+    struct PendingStyleChange { int from = -1, to = -1; };
+    PendingStyleChange pendingStyleChange; // message thread only
+    enum class StyleChoice { SaveAndLoad, DiscardAndLoad, KeepSound };
+    void resolveStyleChange (StyleChoice choice, const juce::String& profileName);
+    std::atomic<bool> editorOpen { false };
+
     juce::String lastDetection; // how the root note was found ("Dateiname", "Analyse", ...)
     static juce::String sampleParamId (int track, const char* what) { return "s" + juce::String (track) + what; }
 
@@ -128,6 +154,12 @@ private:
     std::array<std::atomic<float>*, hhbm::numTracks> pVol {}, pMute {};
     struct SampleParamPtrs { std::atomic<float>* root = nullptr, *fine = nullptr, *att = nullptr, *rel = nullptr, *loop = nullptr, *ls = nullptr, *le = nullptr; };
     std::array<SampleParamPtrs, hhbm::numTracks> pSmp {};
+    std::array<std::array<std::atomic<float>*, hhbm::numSynthParams>, hhbm::numTracks> pSyn {};
+    std::array<std::array<std::atomic<float>*, hhbm::numDrumParams>, hhbm::numDrumSlots> pDrum {};
+
+    void setParam (const juce::String& id, float value);
+    std::unique_ptr<juce::XmlElement> soundToXml (int scope, int sourceStyle = -1) const; // scope -1 = everything
+    bool soundFromXml (const juce::XmlElement& xml, int scope);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HipHopBeatMakerProcessor)
 };

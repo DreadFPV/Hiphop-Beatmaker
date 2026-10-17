@@ -325,6 +325,287 @@ void SamplePanel::resized()
     loopEnd.setBounds (loopRow);
 }
 
+// ============================================================ ParamKnob
+ParamKnob::ParamKnob (juce::AudioProcessorValueTreeState& s, const juce::String& paramId, const juce::String& text)
+{
+    slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 15);
+    slider.setColour (juce::Slider::textBoxTextColourId, Colours::dim);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (s, paramId, slider);
+    slider.setDoubleClickReturnValue (true, s.getParameter (paramId)->convertFrom0to1 (s.getParameter (paramId)->getDefaultValue()));
+    label.setText (text, juce::dontSendNotification);
+    label.setFont (juce::FontOptions (11.0f));
+    label.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (slider);
+    addAndMakeVisible (label);
+}
+
+void ParamKnob::resized()
+{
+    auto r = getLocalBounds();
+    label.setBounds (r.removeFromTop (14));
+    slider.setBounds (r);
+}
+
+// ============================================================ SoundEditor
+SoundEditor::SoundEditor (HipHopBeatMakerProcessor& p, std::function<void (int)> loadInst, std::function<void (int)> loadDrum)
+    : proc (p), loadInstrumentSample (std::move (loadInst)), loadDrumSample (std::move (loadDrum))
+{
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto* b = trackTabs.add (new juce::TextButton (trackName (t)));
+        b->onClick = [this, t] { setTrack (t, t > 0 && proc.instrumentSample (t) != nullptr); };
+        addAndMakeVisible (b);
+    }
+
+    synthTab.onClick = [this] { showPage (false); };
+    sampleTab.onClick = [this] { showPage (true); };
+    addAndMakeVisible (synthTab);
+    addAndMakeVisible (sampleTab);
+
+    presetBtn.setButtonText (U ("Presets ▾"));
+    presetBtn.onClick = [this] { showPresetMenu(); };
+    defaultBtn.setButtonText (U ("Style-Standard"));
+    defaultBtn.setTooltip (U ("Setzt dieses Instrument auf den Sound des aktuellen Styles zurück"));
+    defaultBtn.onClick = [this] { proc.loadInstrumentStyleDefault (track); };
+    closeBtn.setTooltip (U ("Schliessen"));
+    closeBtn.onClick = [this] { if (onClose) onClose(); };
+    addAndMakeVisible (presetBtn);
+    addAndMakeVisible (defaultBtn);
+    addAndMakeVisible (closeBtn);
+
+    startTimerHz (10);
+}
+
+void SoundEditor::setTrack (int t, bool showSampleTab)
+{
+    track = t;
+    knobs.clear();
+    oscAtt.reset();
+    oscBox.reset();
+    samplePanel.reset();
+    drumSampleBtns.clear();
+    drumNames.clear();
+
+    for (int i = 0; i < trackTabs.size(); ++i)
+    {
+        trackTabs[i]->setToggleState (i == t, juce::dontSendNotification);
+        trackTabs[i]->setColour (juce::TextButton::buttonOnColourId, Colours::track (i));
+    }
+    synthTab.setVisible (t > 0);
+    sampleTab.setVisible (t > 0);
+
+    auto& s = proc.apvts;
+    if (t == 0)
+    {
+        for (int slot = 0; slot < numDrumSlots; ++slot)
+        {
+            auto* n = drumNames.add (new juce::Label ({}, drumSlotName (slot)));
+            n->setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            n->setColour (juce::Label::textColourId, Colours::text);
+            n->setJustificationType (juce::Justification::centred);
+            addAndMakeVisible (n);
+
+            auto* b = drumSampleBtns.add (new juce::TextButton());
+            b->setTooltip (U ("Klick: Sample laden · Shift+Klick: zurück zum Synth"));
+            b->onClick = [this, slot]
+            {
+                if (juce::ModifierKeys::currentModifiers.isShiftDown()) proc.clearSample (slot);
+                else if (loadDrumSample) loadDrumSample (slot);
+            };
+            addAndMakeVisible (b);
+
+            for (int i = 0; i < numDrumParams; ++i)
+                addAndMakeVisible (knobs.add (new ParamKnob (s, drumParamId (slot, i), drumParamDef (i).name)));
+        }
+    }
+    else
+    {
+        oscBox = std::make_unique<juce::ComboBox>();
+        for (int w = 0; w < 5; ++w) oscBox->addItem (oscName (w), w + 1);
+        oscAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (s, synthParamId (t, spOsc), *oscBox);
+        addAndMakeVisible (*oscBox);
+
+        for (int i = 0; i < numSynthParams; ++i)
+        {
+            if (i == spOsc) { knobs.add (nullptr); continue; }
+            addAndMakeVisible (knobs.add (new ParamKnob (s, synthParamId (t, i), synthParamDef (i).name)));
+        }
+
+        samplePanel = std::make_unique<SamplePanel> (proc, t, [this] { if (loadInstrumentSample) loadInstrumentSample (track); });
+        addChildComponent (*samplePanel);
+    }
+
+    showPage (t > 0 && showSampleTab);
+    timerCallback();
+}
+
+void SoundEditor::showPage (bool sample)
+{
+    samplePage = sample && track > 0;
+    synthTab.setToggleState (! samplePage, juce::dontSendNotification);
+    sampleTab.setToggleState (samplePage, juce::dontSendNotification);
+    if (oscBox) oscBox->setVisible (! samplePage);
+    for (auto* k : knobs) if (k) k->setVisible (! samplePage);
+    if (samplePanel) samplePanel->setVisible (samplePage);
+    resized();
+    repaint();
+}
+
+void SoundEditor::timerCallback()
+{
+    for (int i = 0; i < drumSampleBtns.size(); ++i)
+    {
+        const auto n = proc.sampleName (i);
+        const auto text = n.isEmpty() ? juce::String ("Synth") : n;
+        if (drumSampleBtns[i]->getButtonText() != text)
+        {
+            drumSampleBtns[i]->setButtonText (text);
+            drumSampleBtns[i]->setColour (juce::TextButton::buttonColourId, n.isEmpty() ? Colours::panelHi : Colours::gold.withAlpha (0.35f));
+        }
+    }
+    if (track > 0)
+        sampleTab.setButtonText (proc.instrumentSample (track) ? U ("Sample ●") : U ("Sample"));
+}
+
+void SoundEditor::showPresetMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, U ("Preset speichern…"));
+    m.addItem (2, U ("Ordner öffnen"));
+    m.addSeparator();
+
+    auto files = HipHopBeatMakerProcessor::instrumentFolder (track).findChildFiles (juce::File::findFiles, false, "*.hhpreset");
+    files.sort();
+    if (files.isEmpty()) m.addItem (-1, U ("(noch keine Presets)"), false);
+    for (int i = 0; i < files.size(); ++i)
+        m.addItem (100 + i, files[i].getFileNameWithoutExtension());
+
+    juce::Component::SafePointer<SoundEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetBtn), [safe, files] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        const int t = safe->track;
+        if (r == 1 && safe->askName)
+            safe->askName (U ("Preset speichern"), juce::String (trackName (t)) + " " + styleName ((int) safe->proc.apvts.getRawParameterValue ("style")->load()),
+                           [safe, t] (juce::String name) { if (safe) safe->proc.saveInstrumentPreset (t, name); });
+        else if (r == 2)
+            HipHopBeatMakerProcessor::instrumentFolder (t).startAsProcess();
+        else if (r >= 100)
+            safe->proc.loadInstrumentPreset (t, files[r - 100]);
+    });
+}
+
+void SoundEditor::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (Colours::panel);
+    g.fillRoundedRectangle (b, 8.0f);
+    g.setColour (Colours::track (juce::jmax (0, track)).withAlpha (0.6f));
+    g.drawRoundedRectangle (b.reduced (0.5f), 8.0f, 1.2f);
+
+    if (! samplePage)
+    {
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        for (auto& [name, r] : groups)
+        {
+            g.setColour (Colours::panelHi.withAlpha (0.6f));
+            g.fillRoundedRectangle (r.toFloat(), 6.0f);
+            g.setColour (Colours::gold.withAlpha (0.8f));
+            g.drawText (name, r.withHeight (18).reduced (8, 0), juce::Justification::centredLeft);
+        }
+    }
+}
+
+void SoundEditor::resized()
+{
+    auto r = getLocalBounds().reduced (12, 8);
+    auto header = r.removeFromTop (30);
+    closeBtn.setBounds (header.removeFromRight (30));
+    header.removeFromRight (8);
+    defaultBtn.setBounds (header.removeFromRight (130));
+    header.removeFromRight (6);
+    presetBtn.setBounds (header.removeFromRight (110));
+    header.removeFromRight (16);
+    if (track > 0)
+    {
+        sampleTab.setBounds (header.removeFromRight (90));
+        header.removeFromRight (4);
+        synthTab.setBounds (header.removeFromRight (90));
+    }
+    for (auto* b : trackTabs)
+    {
+        b->setBounds (header.removeFromLeft (78));
+        header.removeFromLeft (4);
+    }
+    r.removeFromTop (8);
+
+    groups.clear();
+    if (track == 0) layoutDrums (r);
+    else if (samplePage && samplePanel) samplePanel->setBounds (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 560), juce::jmin (r.getHeight(), 320)));
+    else layoutSynth (r);
+}
+
+void SoundEditor::layoutSynth (juce::Rectangle<int> area)
+{
+    if (knobs.isEmpty()) return;
+    const int rowH = (area.getHeight() - 8) / 2;
+    auto row1 = area.removeFromTop (rowH);
+    area.removeFromTop (8);
+    auto row2 = area.removeFromTop (rowH);
+
+    auto placeGroup = [this] (juce::Rectangle<int>& row, const juce::String& name, std::initializer_list<int> params, int knobW)
+    {
+        auto g = row.removeFromLeft (knobW * (int) params.size() + 12);
+        row.removeFromLeft (8);
+        groups.push_back ({ name, g });
+        auto inner = g.reduced (6, 0).withTrimmedTop (20).withTrimmedBottom (4);
+        for (int p : params)
+        {
+            auto cell = inner.removeFromLeft (knobW);
+            if (p == spOsc)
+            {
+                auto c = cell.reduced (4, 0);
+                auto lblArea = c.removeFromTop (14);
+                juce::ignoreUnused (lblArea);
+                oscBox->setBounds (c.withSizeKeepingCentre (c.getWidth(), 26));
+            }
+            else if (auto* k = knobs[p])
+                k->setBounds (cell);
+        }
+    };
+
+    const int w = (row1.getWidth() - 12 * 2 - 8) / 12;
+    placeGroup (row1, "OSZILLATOR", { spOsc, spUnison, spDetune, spSub, spFmRatio, spFmIndex, spFmDecay }, w);
+    placeGroup (row1, "FILTER", { spCutoff, spRes, spFilterEnv, spKeyTrack, spDrive }, w);
+    placeGroup (row2, U ("HÜLLKURVE"), { spAttack, spDecay, spSustain, spRelease, spLevel }, w);
+    placeGroup (row2, "MODULATION", { spGlide, spVibDepth, spVibRate, spPitchEnv, spPitchTime, spTremolo }, w);
+}
+
+void SoundEditor::layoutDrums (juce::Rectangle<int> area)
+{
+    const int colW = area.getWidth() / numDrumSlots;
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+    {
+        auto col = area.removeFromLeft (colW).reduced (3, 0);
+        groups.push_back ({ {}, col });
+        auto inner = col.reduced (4, 6);
+        drumNames[slot]->setBounds (inner.removeFromTop (20));
+        drumSampleBtns[slot]->setBounds (inner.removeFromTop (24));
+        inner.removeFromTop (6);
+        const int kh = juce::jmin (140, inner.getHeight() / 2 - 4);
+        for (int row = 0; row < 2; ++row)
+        {
+            auto line = inner.removeFromTop (kh);
+            for (int c = 0; c < 2; ++c)
+            {
+                const int i = row * 2 + c;
+                knobs[slot * numDrumParams + i]->setBounds (line.removeFromLeft (line.getWidth() / (2 - c)));
+            }
+        }
+    }
+}
+
 // ============================================================ Editor
 HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
@@ -426,12 +707,11 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
         volAtts.add (new APVTS::SliderAttachment (s, "vol" + juce::String (t), *vol));
         addAndMakeVisible (vol);
 
-        if (HipHopBeatMakerProcessor::trackTakesSample (t))
         {
             auto& b = instSampleBtns[(size_t) t];
-            b = std::make_unique<juce::TextButton> ("Synth");
-            b->setTooltip (U ("Eigenes Sample für ") + trackName (t) + U (" laden und einstellen"));
-            b->onClick = [this, t] { showSamplePanel (t); };
+            b = std::make_unique<juce::TextButton> ("Sound");
+            b->setTooltip (U ("Synth-Editor, eigenes Sample und Presets für ") + trackName (t));
+            b->onClick = [this, t] { showSoundEditor (t); };
             addAndMakeVisible (*b);
         }
     }
@@ -460,6 +740,19 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
         addAndMakeVisible (b);
     }
 
+    profileBtn.setButtonText (U ("Sound-Profil ▾"));
+    profileBtn.setTooltip (U ("Kompletten Sound (alle Instrumente + Drums) speichern oder laden"));
+    profileBtn.onClick = [this] { showProfileMenu(); };
+    addAndMakeVisible (profileBtn);
+
+    soundEditor = std::make_unique<SoundEditor> (proc,
+        [this] (int t) { loadInstrumentFor (t); },
+        [this] (int slot) { loadSampleFor (slot); });
+    soundEditor->onClose = [this] { soundEditor->setVisible (false); };
+    soundEditor->askName = [this] (const juce::String& t, const juce::String& d, std::function<void (juce::String)> done) { askName (t, d, std::move (done)); };
+    addChildComponent (*soundEditor);
+    proc.editorOpen = true;
+
     statusLbl.setFont (juce::FontOptions (12.0f));
     statusLbl.setColour (juce::Label::textColourId, Colours::gold);
     addAndMakeVisible (statusLbl);
@@ -471,6 +764,8 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
 
 HipHopBeatMakerEditor::~HipHopBeatMakerEditor()
 {
+    proc.editorOpen = false;
+    alert.reset();
     stopTimer();
     setLookAndFeel (nullptr);
 }
@@ -499,12 +794,95 @@ void HipHopBeatMakerEditor::loadSampleFor (int slot)
                           });
 }
 
-void HipHopBeatMakerEditor::showSamplePanel (int track)
+void HipHopBeatMakerEditor::showSoundEditor (int track)
 {
-    auto* b = instSampleBtns[(size_t) track].get();
-    if (b == nullptr) return;
-    auto panel = std::make_unique<SamplePanel> (proc, track, [this, track] { loadInstrumentFor (track); });
-    juce::CallOutBox::launchAsynchronously (std::move (panel), getLocalArea (b, b->getLocalBounds()), this);
+    if (soundEditor->isVisible() && soundEditor->getTrack() == track)
+    {
+        soundEditor->setVisible (false);
+        return;
+    }
+    soundEditor->setTrack (track, track > 0 && proc.instrumentSample (track) != nullptr);
+    soundEditor->setVisible (true);
+    soundEditor->toFront (false);
+}
+
+void HipHopBeatMakerEditor::askName (const juce::String& title, const juce::String& def, std::function<void (juce::String)> done)
+{
+    alert = std::make_unique<juce::AlertWindow> (title, U ("Name:"), juce::MessageBoxIconType::NoIcon, this);
+    alert->addTextEditor ("name", def);
+    alert->addButton ("Speichern", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    alert->addButton ("Abbrechen", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    alert->enterModalState (true, juce::ModalCallbackFunction::create ([safe, done] (int r)
+    {
+        if (safe == nullptr || safe->alert == nullptr) return;
+        const auto name = safe->alert->getTextEditorContents ("name");
+        safe->alert.reset();
+        if (r == 1 && name.trim().isNotEmpty()) done (name);
+    }), false);
+}
+
+void HipHopBeatMakerEditor::showProfileMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, U ("Sound-Profil speichern…"));
+    m.addItem (2, U ("Style-Standard laden (alle Instrumente)"));
+    m.addItem (3, U ("Ordner öffnen"));
+    m.addSeparator();
+
+    auto files = HipHopBeatMakerProcessor::profileFolder().findChildFiles (juce::File::findFiles, false, "*.hhsound");
+    files.sort();
+    if (files.isEmpty()) m.addItem (-1, U ("(noch keine Profile)"), false);
+    for (int i = 0; i < files.size(); ++i)
+        m.addItem (100 + i, files[i].getFileNameWithoutExtension());
+
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&profileBtn), [safe, files] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        const int style = (int) safe->proc.apvts.getRawParameterValue ("style")->load();
+        if (r == 1)
+            safe->askName (U ("Sound-Profil speichern"), juce::String (styleName (style)) + " eigener Sound",
+                           [safe] (juce::String name)
+                           {
+                               if (safe == nullptr) return;
+                               const auto f = safe->proc.saveProfile (name);
+                               safe->statusLbl.setText (U ("Profil gespeichert: ") + f.getFileName(), juce::dontSendNotification);
+                           });
+        else if (r == 2) safe->proc.loadStyleSound (style);
+        else if (r == 3) HipHopBeatMakerProcessor::profileFolder().startAsProcess();
+        else if (r >= 100 && safe->proc.loadProfile (files[r - 100]))
+            safe->statusLbl.setText (U ("Profil geladen: ") + files[r - 100].getFileNameWithoutExtension(), juce::dontSendNotification);
+    });
+}
+
+void HipHopBeatMakerEditor::showStyleDialog()
+{
+    const auto pending = proc.pendingStyleChange;
+    if (pending.to < 0 || styleDialogOpen) return;
+    styleDialogOpen = true;
+
+    const juce::String from (styleName (pending.from)), to (styleName (pending.to));
+    alert = std::make_unique<juce::AlertWindow> (U ("Sound vor dem Style-Wechsel speichern?"),
+        U ("Du hast den ") + from + U ("-Sound verändert.\nSoll er als eigenes Sound-Profil gespeichert werden, bevor der ")
+            + to + U ("-Standard geladen wird?\n(Die Style-Standards bleiben immer erhalten.)"),
+        juce::MessageBoxIconType::NoIcon, this);
+    alert->addTextEditor ("name", from + " eigener Sound " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M"), U ("Profil-Name:"));
+    alert->addButton (U ("Speichern & laden"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    alert->addButton (U ("Nicht speichern"), 2);
+    alert->addButton (U ("Sound behalten"), 3, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    alert->enterModalState (true, juce::ModalCallbackFunction::create ([safe] (int r)
+    {
+        if (safe == nullptr) return;
+        const auto name = safe->alert ? safe->alert->getTextEditorContents ("name") : juce::String();
+        safe->alert.reset();
+        safe->styleDialogOpen = false;
+        using C = HipHopBeatMakerProcessor::StyleChoice;
+        safe->proc.resolveStyleChange (r == 1 ? C::SaveAndLoad : (r == 2 ? C::DiscardAndLoad : C::KeepSound), name);
+        if (r == 1) safe->statusLbl.setText (U ("Profil gespeichert: ") + name, juce::dontSendNotification);
+    }), false);
 }
 
 void HipHopBeatMakerEditor::loadInstrumentFor (int track)
@@ -532,6 +910,8 @@ void HipHopBeatMakerEditor::exportAndReveal (bool fullSong)
 
 void HipHopBeatMakerEditor::timerCallback()
 {
+    if (proc.pendingStyleChange.to >= 0) showStyleDialog();
+
     const int section = (int) proc.apvts.getRawParameterValue ("section")->load();
     for (int i = 0; i < sectionButtons.size(); ++i)
         sectionButtons[i]->setToggleState (i == section, juce::dontSendNotification);
@@ -556,8 +936,8 @@ void HipHopBeatMakerEditor::timerCallback()
     {
         if (auto* b = instSampleBtns[(size_t) t].get())
         {
-            const bool has = proc.instrumentSample (t) != nullptr;
-            const juce::String text = has ? "Sample" : "Synth";
+            const bool has = t > 0 && proc.instrumentSample (t) != nullptr;
+            const juce::String text = has ? "Sample" : "Sound";
             if (b->getButtonText() != text)
             {
                 b->setButtonText (text);
@@ -602,7 +982,8 @@ void HipHopBeatMakerEditor::resized()
 {
     auto area = getLocalBounds().reduced (16, 0);
     auto header = area.removeFromTop (50);
-    bpmInfo.setBounds (header.removeFromRight (220));
+    bpmInfo.setBounds (header.removeFromRight (180));
+    profileBtn.setBounds (header.removeFromRight (150).withSizeKeepingCentre (150, 30));
 
     // combos
     area.removeFromTop (8);
@@ -666,6 +1047,7 @@ void HipHopBeatMakerEditor::resized()
 
     // lanes
     area.removeFromTop (8);
+    if (soundEditor) soundEditor->setBounds (area.getX(), area.getY(), area.getWidth(), getHeight() - area.getY() - 10);
     for (int t = 0; t < numTracks; ++t)
     {
         auto r = area.removeFromTop (54);

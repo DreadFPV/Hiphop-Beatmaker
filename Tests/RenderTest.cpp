@@ -18,6 +18,7 @@ static juce::AudioBuffer<float> render (const Pattern& p, int style, double bpm,
     SynthEngine eng;
     eng.prepare (sr, 512);
     eng.setStyle (style);
+    for (int t = 1; t < numTracks; ++t) eng.setPatch (t, SynthEngine::stylePatch (style, t));
 
     std::vector<Ev> ev;
     for (int t = 0; t < numTracks; ++t)
@@ -146,6 +147,7 @@ static void sampleTests()
         SynthEngine eng;
         eng.prepare (48000, 512);
         eng.setStyle ((int) Style::Trap);
+        eng.setPatch ((int) Track::Bass, SynthEngine::stylePatch ((int) Style::Trap, (int) Track::Bass));
         eng.setInstrumentSample ((int) Track::Bass, makeSample (55, 3.0));
         SampleParams p808; p808.root = 33; p808.loop = true;
         eng.setSampleParams ((int) Track::Bass, p808);
@@ -163,9 +165,45 @@ static void sampleTests()
     }
 }
 
+static void drumTweakTests()
+{
+    std::cout << "--- drum tweak tests\n";
+    auto hit = [] (DrumTweak tw, int note)
+    {
+        SynthEngine eng;
+        eng.prepare (48000, 512);
+        eng.setStyle ((int) Style::BoomBap);
+        eng.setDrumTweak (drumNoteToSlot (note), tw);
+        juce::AudioBuffer<float> out (2, 96000);
+        out.clear();
+        eng.noteOn ((int) Track::Drums, note, 1.0f);
+        eng.render (out, 0, out.getNumSamples());
+        return out;
+    };
+    auto tail = [] (const juce::AudioBuffer<float>& b) { return b.getRMSLevel (0, 24000, 4800); }; // 0.5 s after hit
+
+    const auto base = hit ({}, Drum::Snare);
+    DrumTweak longer; longer.decay = 3.0f;
+    DrumTweak quiet;  quiet.level = 0.5f;
+    CHECK (tail (hit (longer, Drum::Snare)) > tail (base) * 5, "decay stretches");
+    CHECK (std::abs (hit (quiet, Drum::Snare).getRMSLevel (0, 0, 4800) - base.getRMSLevel (0, 0, 4800) * 0.5f) < base.getRMSLevel (0, 0, 4800) * 0.15f, "level");
+
+    // kick tune +12 st -> pitch one octave higher after the sweep
+    DrumTweak up; up.tune = 12; up.decay = 4;
+    DrumTweak flat; flat.decay = 4;
+    auto k0 = hit (flat, Drum::Kick), k12 = hit (up, Drum::Kick);
+    juce::AudioBuffer<float> a (1, 8192), b (1, 8192);
+    a.copyFrom (0, 0, k0, 0, 12000, 8192);
+    b.copyFrom (0, 0, k12, 0, 12000, 8192);
+    const float p0 = SampleTools::detectPitch (a, 48000), p12 = SampleTools::detectPitch (b, 48000);
+    std::cout << "   kick pitch " << p0 << " -> " << p12 << "\n";
+    CHECK (std::abs ((p12 - p0) - 12.0f) < 0.5f, "kick tune");
+}
+
 int main (int argc, char** argv)
 {
     sampleTests();
+    drumTweakTests();
     juce::File outDir = argc > 1 ? juce::File (argv[1]) : juce::File::getCurrentWorkingDirectory().getChildFile ("render");
     outDir.createDirectory();
 

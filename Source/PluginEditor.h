@@ -94,6 +94,60 @@ private:
     std::unique_ptr<APVTS::SliderAttachment> rootAtt, fineAtt, attAtt, relAtt, lsAtt, leAtt;
     std::unique_ptr<APVTS::ButtonAttachment> loopAtt;
 };
+/** Rotary knob bound to a parameter. */
+class ParamKnob : public juce::Component
+{
+public:
+    ParamKnob (juce::AudioProcessorValueTreeState& s, const juce::String& paramId, const juce::String& label);
+    void resized() override;
+    juce::Slider slider;
+    juce::Label label;
+private:
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
+};
+
+/** Full sound editor for one track: synth parameters, sample slot, presets. */
+class SoundEditor : public juce::Component, private juce::Timer
+{
+public:
+    SoundEditor (HipHopBeatMakerProcessor& p, std::function<void (int)> loadInstrumentSample,
+                 std::function<void (int)> loadDrumSample);
+    void setTrack (int track, bool showSampleTab);
+    int getTrack() const { return track; }
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    std::function<void()> onClose;
+    /** asks for a name (used for presets) */
+    std::function<void (const juce::String& title, const juce::String& def, std::function<void (juce::String)>)> askName;
+
+private:
+    void timerCallback() override;
+    void showPage (bool sample);
+    void showPresetMenu();
+    void layoutSynth (juce::Rectangle<int> area);
+    void layoutDrums (juce::Rectangle<int> area);
+
+    HipHopBeatMakerProcessor& proc;
+    std::function<void (int)> loadInstrumentSample, loadDrumSample;
+    int track = -1;
+    bool samplePage = false;
+
+    juce::OwnedArray<juce::TextButton> trackTabs;
+    juce::TextButton synthTab { "Synth" }, sampleTab { "Sample" }, presetBtn, defaultBtn, closeBtn { "X" };
+
+    // synth page
+    std::unique_ptr<juce::ComboBox> oscBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oscAtt;
+    juce::OwnedArray<ParamKnob> knobs; // index = SynthParam (osc slot unused)
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> groups;
+
+    // sample page
+    std::unique_ptr<SamplePanel> samplePanel;
+
+    // drum page
+    juce::OwnedArray<juce::TextButton> drumSampleBtns;
+    juce::OwnedArray<juce::Label> drumNames;
+};
 } // namespace hhbm::ui
 
 class HipHopBeatMakerEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -110,7 +164,10 @@ private:
     void setChoice (const juce::String& id, int index);
     void loadSampleFor (int slot);
     void exportAndReveal (bool fullSong);
-    void showSamplePanel (int track);
+    void showSoundEditor (int track);
+    void showProfileMenu();
+    void askName (const juce::String& title, const juce::String& def, std::function<void (juce::String)> done);
+    void showStyleDialog();
     void loadInstrumentFor (int track);
 
     using APVTS = juce::AudioProcessorValueTreeState;
@@ -154,6 +211,10 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 
     juce::Label statusLbl;
+    std::unique_ptr<hhbm::ui::SoundEditor> soundEditor;
+    juce::TextButton profileBtn;
+    std::unique_ptr<juce::AlertWindow> alert;
+    bool styleDialogOpen = false;
     int lastVersion = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HipHopBeatMakerEditor)

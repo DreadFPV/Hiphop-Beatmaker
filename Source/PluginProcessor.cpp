@@ -43,6 +43,60 @@ juce::AudioProcessorValueTreeState::ParameterLayout HipHopBeatMakerProcessor::cr
         l.add (std::make_unique<AudioParameterBool>  (ParameterID { "mute" + String (t), 1 }, n + " Mute", false));
     }
 
+    // synth editor parameters (defaults = Boom Bap sound)
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const auto patch = SynthEngine::stylePatch (0, t);
+        for (int i = 0; i < numSynthParams; ++i)
+        {
+            const auto& d = synthParamDef (i);
+            const ParameterID pid { synthParamId (t, i), 1 };
+            const String name = String (trackName (t)) + " " + d.name;
+            const float def = getPatchValue (patch, i);
+            if (d.kind == 1)
+            {
+                StringArray waves;
+                for (int w = 0; w < 5; ++w) waves.add (oscName (w));
+                l.add (std::make_unique<AudioParameterChoice> (pid, name, waves, (int) def));
+            }
+            else if (d.kind == 2)
+                l.add (std::make_unique<AudioParameterInt> (pid, name, (int) d.min, (int) d.max, (int) def));
+            else
+            {
+                NormalisableRange<float> r (d.min, d.max);
+                if (d.skewCentre > 0) r.setSkewForCentre (d.skewCentre);
+                const String unit (d.unit);
+                l.add (std::make_unique<AudioParameterFloat> (pid, name, r, def, AudioParameterFloatAttributes()
+                    .withStringFromValueFunction ([unit] (float v, int)
+                    {
+                        if (unit == "s")  return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, 2) + " s";
+                        if (unit == "Hz") return v < 1000.0f ? String (v, v < 10.0f ? 1 : 0) + " Hz" : String (v / 1000.0f, 1) + " kHz";
+                        if (unit.isEmpty()) return String (v, 2);
+                        return String (v, 1) + " " + unit;
+                    })));
+            }
+        }
+    }
+
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+    {
+        for (int i = 0; i < numDrumParams; ++i)
+        {
+            const auto& d = drumParamDef (i);
+            NormalisableRange<float> r (d.min, d.max);
+            if (i == dpDecay) r.setSkewForCentre (1.0f);
+            const String unit (d.unit);
+            l.add (std::make_unique<AudioParameterFloat> (ParameterID { drumParamId (slot, i), 1 },
+                String (drumSlotName (slot)) + " " + d.name, r, drumDefault (i), AudioParameterFloatAttributes()
+                    .withStringFromValueFunction ([unit] (float v, int)
+                    {
+                        if (unit == "st") return (v > 0 ? "+" : "") + String (v, 1) + " st";
+                        if (unit == "x")  return String (v, 2) + "x";
+                        return String (v, 2);
+                    })));
+        }
+    }
+
     // instrument sample slots
     for (int t = 1; t < numTracks; ++t)
     {
@@ -93,6 +147,14 @@ HipHopBeatMakerProcessor::HipHopBeatMakerProcessor()
             sp.le   = apvts.getRawParameterValue (sampleParamId (t, "le"));
         }
     }
+
+    for (int t = 1; t < numTracks; ++t)
+        for (int i = 0; i < numSynthParams; ++i)
+            pSyn[(size_t) t][(size_t) i] = apvts.getRawParameterValue (synthParamId (t, i));
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+        for (int i = 0; i < numDrumParams; ++i)
+            pDrum[(size_t) slot][(size_t) i] = apvts.getRawParameterValue (drumParamId (slot, i));
+    apvts.state.setProperty ("soundVersion", 1, nullptr);
 
     for (auto* id : genParams)
         apvts.addParameterListener (id, this);
@@ -192,9 +254,29 @@ void HipHopBeatMakerProcessor::handleAsyncUpdate()
     const int style = (int) pStyle->load();
     if (style != lastStyle)
     {
+        const int from = lastStyle;
         lastStyle = style;
         if (auto* p = apvts.getParameter ("bpm"))
             p->setValueNotifyingHost (p->convertTo0to1 ((float) defaultBpm (style)));
+
+        const int soundOwner = pendingStyleChange.from >= 0 ? pendingStyleChange.from : from;
+        if (! isSoundModified (soundOwner))
+        {
+            pendingStyleChange = {};
+            loadStyleSound (style);
+        }
+        else if (editorOpen.load())
+        {
+            pendingStyleChange = { soundOwner, style }; // editor asks the user
+        }
+        else
+        {
+            // nobody to ask (automation): keep a backup, then load the style sound
+            saveProfile (juce::String ("Auto-Backup ") + styleName (soundOwner) + " "
+                         + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"), soundOwner);
+            pendingStyleChange = {};
+            loadStyleSound (style);
+        }
     }
     regenerateNow();
 }
@@ -244,6 +326,19 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     engine.setTuning (pTuning->load() > 0.5f ? 432.0f : 440.0f);
     for (int t = 0; t < numTracks; ++t)
         engine.setTrackGain (t, pMute[(size_t) t]->load() > 0.5f ? 0.0f : pVol[(size_t) t]->load());
+    for (int t = 1; t < numTracks; ++t)
+    {
+        Patch patch;
+        for (int i = 0; i < numSynthParams; ++i)
+            setPatchValue (patch, i, pSyn[(size_t) t][(size_t) i]->load());
+        engine.setPatch (t, patch);
+    }
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+    {
+        const auto& d = pDrum[(size_t) slot];
+        engine.setDrumTweak (slot, { d[dpTune]->load(), d[dpDecay]->load(), d[dpTone]->load(), d[dpLevel]->load() });
+    }
+
     for (int t = 1; t < numTracks; ++t)
     {
         const auto& sp = pSmp[(size_t) t];
@@ -518,6 +613,184 @@ void HipHopBeatMakerProcessor::reloadSamplesFromState()
     }
 }
 
+// ============================================================ sound design
+void HipHopBeatMakerProcessor::setParam (const juce::String& id, float value)
+{
+    if (auto* p = apvts.getParameter (id))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+        p->endChangeGesture();
+    }
+}
+
+void HipHopBeatMakerProcessor::loadStyleSound (int style)
+{
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const auto patch = SynthEngine::stylePatch (style, t);
+        for (int i = 0; i < numSynthParams; ++i)
+            setParam (synthParamId (t, i), getPatchValue (patch, i));
+    }
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+        for (int i = 0; i < numDrumParams; ++i)
+            setParam (drumParamId (slot, i), drumDefault (i));
+}
+
+void HipHopBeatMakerProcessor::loadInstrumentStyleDefault (int track)
+{
+    const int style = (int) pStyle->load();
+    if (track == 0)
+    {
+        for (int slot = 0; slot < numDrumSlots; ++slot)
+            for (int i = 0; i < numDrumParams; ++i)
+                setParam (drumParamId (slot, i), drumDefault (i));
+        return;
+    }
+    const auto patch = SynthEngine::stylePatch (style, track);
+    for (int i = 0; i < numSynthParams; ++i)
+        setParam (synthParamId (track, i), getPatchValue (patch, i));
+}
+
+bool HipHopBeatMakerProcessor::isSoundModified (int style) const
+{
+    auto differs = [this] (const juce::String& id, float want)
+    {
+        auto* p = apvts.getParameter (id);
+        return p != nullptr && std::abs (p->getValue() - p->convertTo0to1 (want)) > 0.002f;
+    };
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const auto patch = SynthEngine::stylePatch (style, t);
+        for (int i = 0; i < numSynthParams; ++i)
+            if (differs (synthParamId (t, i), getPatchValue (patch, i))) return true;
+    }
+    for (int slot = 0; slot < numDrumSlots; ++slot)
+        for (int i = 0; i < numDrumParams; ++i)
+            if (differs (drumParamId (slot, i), drumDefault (i))) return true;
+    return false;
+}
+
+juce::File HipHopBeatMakerProcessor::presetsRoot()
+{
+    auto d = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                 .getChildFile ("Hip-Hop BeatMaker").getChildFile ("Presets");
+    d.createDirectory();
+    return d;
+}
+
+juce::File HipHopBeatMakerProcessor::profileFolder()
+{
+    auto d = presetsRoot().getChildFile ("Sound-Profile");
+    d.createDirectory();
+    return d;
+}
+
+juce::File HipHopBeatMakerProcessor::instrumentFolder (int track)
+{
+    auto d = presetsRoot().getChildFile (trackName (track));
+    d.createDirectory();
+    return d;
+}
+
+std::unique_ptr<juce::XmlElement> HipHopBeatMakerProcessor::soundToXml (int scope, int sourceStyle) const
+{
+    auto xml = std::make_unique<juce::XmlElement> ("HHSound");
+    xml->setAttribute ("version", 1);
+    xml->setAttribute ("kind", scope < 0 ? "profile" : "instrument");
+    xml->setAttribute ("style", styleName (sourceStyle >= 0 ? sourceStyle : (int) pStyle->load()));
+    if (scope >= 0) xml->setAttribute ("track", trackName (scope));
+
+    auto add = [&] (const juce::String& storedId, const juce::String& paramId)
+    {
+        if (auto* p = apvts.getParameter (paramId))
+        {
+            auto* e = xml->createNewChildElement ("P");
+            e->setAttribute ("id", storedId);
+            e->setAttribute ("v", (double) dynamic_cast<juce::RangedAudioParameter*> (p)->convertFrom0to1 (p->getValue()));
+        }
+    };
+
+    for (int t = 1; t < numTracks; ++t)
+        if (scope < 0 || scope == t)
+            for (int i = 0; i < numSynthParams; ++i)
+                add (scope < 0 ? synthParamId (t, i) : juce::String (synthParamDef (i).key), synthParamId (t, i));
+
+    if (scope <= 0)
+        for (int slot = 0; slot < numDrumSlots; ++slot)
+            for (int i = 0; i < numDrumParams; ++i)
+                add (drumParamId (slot, i), drumParamId (slot, i));
+
+    return xml;
+}
+
+bool HipHopBeatMakerProcessor::soundFromXml (const juce::XmlElement& xml, int scope)
+{
+    if (! xml.hasTagName ("HHSound")) return false;
+    int applied = 0;
+    for (auto* e : xml.getChildWithTagNameIterator ("P"))
+    {
+        const auto id = e->getStringAttribute ("id");
+        const float v = (float) e->getDoubleAttribute ("v");
+        juce::String target;
+        if (scope > 0 && ! id.startsWithChar ('p') && ! id.startsWithChar ('d'))
+            target = "p" + juce::String (scope) + id;             // instrument preset -> this track
+        else if (scope < 0 || (scope == 0 && id.startsWithChar ('d')))
+            target = id;                                          // profile / drum kit
+        if (target.isNotEmpty() && apvts.getParameter (target) != nullptr)
+        {
+            setParam (target, v);
+            ++applied;
+        }
+    }
+    return applied > 0;
+}
+
+static juce::String safeFileName (const juce::String& name)
+{
+    auto n = juce::File::createLegalFileName (name.trim());
+    return n.isEmpty() ? juce::String ("Preset") : n;
+}
+
+juce::File HipHopBeatMakerProcessor::saveProfile (const juce::String& name, int sourceStyle)
+{
+    auto f = profileFolder().getChildFile (safeFileName (name) + ".hhsound");
+    if (auto xml = soundToXml (-1, sourceStyle)) xml->writeTo (f);
+    return f;
+}
+
+bool HipHopBeatMakerProcessor::loadProfile (const juce::File& f)
+{
+    auto xml = juce::XmlDocument::parse (f);
+    return xml != nullptr && soundFromXml (*xml, -1);
+}
+
+juce::File HipHopBeatMakerProcessor::saveInstrumentPreset (int track, const juce::String& name)
+{
+    auto f = instrumentFolder (track).getChildFile (safeFileName (name) + ".hhpreset");
+    if (auto xml = soundToXml (track)) xml->writeTo (f);
+    return f;
+}
+
+bool HipHopBeatMakerProcessor::loadInstrumentPreset (int track, const juce::File& f)
+{
+    auto xml = juce::XmlDocument::parse (f);
+    return xml != nullptr && soundFromXml (*xml, track);
+}
+
+void HipHopBeatMakerProcessor::resolveStyleChange (StyleChoice choice, const juce::String& profileName)
+{
+    const auto pending = pendingStyleChange;
+    pendingStyleChange = {};
+    if (pending.to < 0) return;
+
+    if (choice == StyleChoice::SaveAndLoad)
+        saveProfile (profileName.isNotEmpty() ? profileName : juce::String (styleName (pending.from)) + " eigener Sound", pending.from);
+
+    if (choice != StyleChoice::KeepSound)
+        loadStyleSound ((int) pStyle->load());
+}
+
 // ============================================================ state
 void HipHopBeatMakerProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -531,8 +804,13 @@ void HipHopBeatMakerProcessor::setStateInformation (const void* data, int sizeIn
     {
         if (xml->hasTagName (apvts.state.getType()))
         {
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            auto tree = juce::ValueTree::fromXml (*xml);
+            const bool hasSound = tree.hasProperty ("soundVersion");
+            apvts.replaceState (tree);
+            apvts.state.setProperty ("soundVersion", 1, nullptr);
             lastStyle = (int) pStyle->load();
+            pendingStyleChange = {};
+            if (! hasSound) loadStyleSound (lastStyle); // project from an older version
             reloadSamplesFromState();
             regenerateNow();
         }

@@ -156,11 +156,19 @@ private:
 };
 
 // ============================================================ drums
+/** User tweaks per drum slot. */
+struct DrumTweak
+{
+    float tune = 0;    // semitones -24..24
+    float decay = 1;   // multiplier 0.25..4
+    float tone = 0;    // -1 (dark) .. 1 (bright)
+    float level = 1;   // 0..1.5
+};
 
 class DrumVoice
 {
 public:
-    void start (int slot, float vel, int style, float sr, std::shared_ptr<const DrumSample> sample);
+    void start (int slot, float vel, int style, float sr, std::shared_ptr<const DrumSample> sample, const DrumTweak& tw);
     void choke() { if (active) chokeGain = 0.995f; }
     void render (float* l, float* r, int n);
 
@@ -177,6 +185,8 @@ private:
     Svf f1, f2;
     std::shared_ptr<const DrumSample> sample;
     double samplePos = 0, sampleInc = 1;
+    DrumTweak tweak;
+    float ratio = 1;
 };
 
 // ============================================================ engine
@@ -185,6 +195,11 @@ class SynthEngine
 public:
     void prepare (double sampleRate, int blockSize);
     void setStyle (int s);
+
+    /** Built-in sound of a style for a tonal track (Bass, Keys, Pad, Lead). */
+    static Patch stylePatch (int style, int track);
+    void setPatch (int track, const Patch& p) { patches[(size_t) track] = p; }
+    void setDrumTweak (int slot, const DrumTweak& t) { drumTweaks[(size_t) slot] = t; }
     void setTuning (float a4) { a4Hz = a4; }
     void setTrackGain (int track, float g) { trackGain[(size_t) track] = g; }
 
@@ -206,7 +221,6 @@ public:
 private:
     float freqFor (int note) const { return a4Hz * std::pow (2.0f, (note - 69) / 12.0f); }
     Voice* findPolyVoice (std::vector<Voice>& pool);
-    void updatePatches();
 
     double sr = 44100;
     int style = 0;
@@ -228,7 +242,8 @@ private:
     };
     Mono bass, lead;
     std::vector<Voice> keys, pad;
-    Patch bassPatch, leadPatch, keysPatch, padPatch;
+    std::array<Patch, numTracks> patches;
+    std::array<DrumTweak, numDrumSlots> drumTweaks;
     uint64_t counter = 0;
 
     juce::AudioBuffer<float> temp;
