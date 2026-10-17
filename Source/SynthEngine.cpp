@@ -5,13 +5,15 @@ namespace hhbm
 static constexpr float twoPi = juce::MathConstants<float>::twoPi;
 
 // ============================================================ Voice
-void Voice::start (int n, float v, const Patch& p, float f, bool legato)
+void Voice::start (int n, float v, const Patch& p, float f, bool legato,
+                   std::shared_ptr<const SampleData> sample, const SampleParams& params)
 {
+    const bool fresh = ! legato || ! env.active();
     patch = p;
     note = n;
     vel = v;
     targetFreq = f;
-    if (! legato || ! env.active())
+    if (fresh)
     {
         freq = f;
         for (size_t i = 0; i < phase.size(); ++i)
@@ -21,12 +23,89 @@ void Voice::start (int n, float v, const Patch& p, float f, bool legato)
         filterR.reset();
         time = 0;
         lfo = 0;
+        spos = 0;
     }
     glideCoef = p.glide > 0 ? std::exp (-1.0f / (p.glide * sr * 0.35f)) : 0.0f;
-    env.setTimes (p.att, p.dec, p.sus, p.rel, sr);
+
+    smp = std::move (sample);
+    sp = params;
+    if (smp != nullptr && smp->data.getNumSamples() > 2)
+    {
+        const int len = smp->data.getNumSamples();
+        loopA = juce::jlimit (0, len - 2, (int) (sp.loopStart * (float) len));
+        loopB = juce::jlimit (0, len - 1, (int) (sp.loopEnd * (float) len));
+        if (loopB - loopA < 64) sp.loop = false;
+        xfade = juce::jmin ((int) (smp->sampleRate * 0.012), (loopB - loopA) / 4);
+        env.setTimes (sp.attack, 0.05f, 1.0f, sp.release, sr);
+    }
+    else
+    {
+        smp = nullptr;
+        env.setTimes (p.att, p.dec, p.sus, p.rel, sr);
+    }
     env.noteOn (true);
     fmEnv = 1.0f;
     pitchEnvVal = p.pitchEnv;
+}
+
+float Voice::readSample (int ch, double pos) const
+{
+    const auto& d = smp->data;
+    const int idx = (int) pos;
+    if (idx < 0 || idx + 1 >= d.getNumSamples()) return 0.0f;
+    const float* x = d.getReadPointer (juce::jmin (ch, d.getNumChannels() - 1));
+    const float frac = (float) (pos - idx);
+    return x[idx] + frac * (x[idx + 1] - x[idx]);
+}
+
+void Voice::renderSample (float* outL, float* outR, int n)
+{
+    const float peCoef = std::exp (-1.0f / (juce::jmax (0.001f, patch.pitchEnvTime) * sr));
+    const double rootHz = 440.0 * std::exp2 ((sp.root - 69.0) / 12.0) * std::exp2 (sp.fineCents / 1200.0);
+    const double rateRatio = smp->sampleRate / sr;
+    const double len = smp->data.getNumSamples();
+    const double loopLen = loopB - loopA;
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float e = env.next();
+        if (! env.active()) { note = -1; break; }
+
+        if (glideCoef > 0) freq = targetFreq + (freq - targetFreq) * glideCoef;
+        else               freq = targetFreq;
+        pitchEnvVal *= peCoef;
+        lfo += patch.vibratoRate / sr;
+        if (lfo >= 1) lfo -= 1;
+        time += 1.0f / sr;
+
+        const float vibAmt = patch.vibratoDepth * juce::jmin (1.0f, time / 0.35f);
+        const float f = freq * std::exp2 ((pitchEnvVal + vibAmt * std::sin (twoPi * lfo)) / 12.0f);
+        const double inc = f / rootHz * rateRatio;
+
+        float l = readSample (0, spos), r = readSample (1, spos);
+
+        if (sp.loop && xfade > 0 && spos >= loopB - xfade)
+        {
+            // crossfade the loop end into the loop start
+            const float w = (float) ((spos - (loopB - xfade)) / xfade);
+            const double back = spos - loopLen;
+            l = l * (1.0f - w) + readSample (0, back) * w;
+            r = r * (1.0f - w) + readSample (1, back) * w;
+        }
+
+        spos += inc;
+        if (sp.loop && spos >= loopB)
+            spos -= loopLen;
+        else if (! sp.loop && spos >= len - 1)
+        {
+            kill();
+            break;
+        }
+
+        const float amp = e * vel * 0.8f;
+        outL[i] += l * amp;
+        outR[i] += r * amp;
+    }
 }
 
 void Voice::glideTo (int n, float f)
@@ -45,6 +124,8 @@ float Voice::poly (float t, float dt) const
 
 void Voice::render (float* outL, float* outR, int n)
 {
+    if (smp != nullptr) { renderSample (outL, outR, n); return; }
+
     const float fmCoef = std::exp (-1.0f / (juce::jmax (0.01f, patch.fmDecay) * sr));
     const float peCoef = std::exp (-1.0f / (juce::jmax (0.001f, patch.pitchEnvTime) * sr));
     const int uni = juce::jlimit (1, 4, patch.unison);
@@ -384,6 +465,18 @@ std::shared_ptr<const DrumSample> SynthEngine::getSample (int slot) const
     return samples[(size_t) slot];
 }
 
+void SynthEngine::setInstrumentSample (int track, std::shared_ptr<const SampleData> s)
+{
+    const juce::SpinLock::ScopedLockType sl (sampleLock);
+    instSamples[(size_t) track] = std::move (s);
+}
+
+std::shared_ptr<const SampleData> SynthEngine::getInstrumentSample (int track) const
+{
+    const juce::SpinLock::ScopedLockType sl (sampleLock);
+    return instSamples[(size_t) track];
+}
+
 Voice* SynthEngine::findPolyVoice (std::vector<Voice>& pool)
 {
     Voice* oldest = nullptr;
@@ -425,7 +518,8 @@ void SynthEngine::noteOn (int track, int note, float velocity)
             m.stack.push_back (note);
             const bool legato = m.voice.active() && p.glide > 0 && m.stack.size() > 1;
             if (legato) m.voice.glideTo (note, freqFor (note));
-            else        m.voice.start (note, velocity, p, freqFor (note), false);
+            else        m.voice.start (note, velocity, p, freqFor (note), false,
+                                       getInstrumentSample (track), instParams[(size_t) track]);
             break;
         }
         case Track::Keys:
@@ -434,7 +528,8 @@ void SynthEngine::noteOn (int track, int note, float velocity)
             auto& pool = track == (int) Track::Keys ? keys : pad;
             if (auto* v = findPolyVoice (pool))
             {
-                v->start (note, velocity, track == (int) Track::Keys ? keysPatch : padPatch, freqFor (note), false);
+                v->start (note, velocity, track == (int) Track::Keys ? keysPatch : padPatch, freqFor (note), false,
+                          getInstrumentSample (track), instParams[(size_t) track]);
                 v->age = counter;
             }
             break;

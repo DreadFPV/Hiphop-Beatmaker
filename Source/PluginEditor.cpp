@@ -160,6 +160,171 @@ void DragTile::mouseDrag (const juce::MouseEvent& e)
         juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, this);
 }
 
+// ============================================================ SamplePanel
+SamplePanel::SamplePanel (HipHopBeatMakerProcessor& p, int t, std::function<void()> load)
+    : proc (p), track (t), onLoad (std::move (load))
+{
+    auto& s = proc.apvts;
+    auto id = [t] (const char* w) { return HipHopBeatMakerProcessor::sampleParamId (t, w); };
+
+    loadBtn.setButtonText (U ("Sample laden…"));
+    loadBtn.onClick = [this] { if (onLoad) onLoad(); };
+    clearBtn.setButtonText (U ("Synth verwenden"));
+    clearBtn.onClick = [this] { proc.clearInstrumentSample (track); };
+    addAndMakeVisible (loadBtn);
+    addAndMakeVisible (clearBtn);
+
+    nameLbl.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    nameLbl.setColour (juce::Label::textColourId, Colours::text);
+    infoLbl.setFont (juce::FontOptions (11.0f));
+    addAndMakeVisible (nameLbl);
+    addAndMakeVisible (infoLbl);
+
+    auto setup = [&] (juce::Slider& sl, juce::Label& lbl, const juce::String& text, juce::Slider::SliderStyle style,
+                      const juce::String& pid, std::unique_ptr<APVTS::SliderAttachment>& att)
+    {
+        sl.setSliderStyle (style);
+        if (style == juce::Slider::IncDecButtons)
+            sl.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 52, 22);
+        else if (style == juce::Slider::LinearHorizontal)
+            sl.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        else
+            sl.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 16);
+        sl.setPopupDisplayEnabled (style == juce::Slider::LinearHorizontal, true, this);
+        att = std::make_unique<APVTS::SliderAttachment> (s, pid, sl);
+        lbl.setText (text, juce::dontSendNotification);
+        lbl.setFont (juce::FontOptions (11.0f));
+        lbl.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (sl);
+        addAndMakeVisible (lbl);
+    };
+    setup (root,      rootLbl,    "GRUNDTON",   juce::Slider::IncDecButtons,               id ("root"), rootAtt);
+    setup (fine,      fineLbl,    "FINE (ct)",  juce::Slider::RotaryHorizontalVerticalDrag, id ("fine"), fineAtt);
+    setup (attack,    attackLbl,  "ATTACK",     juce::Slider::RotaryHorizontalVerticalDrag, id ("att"),  attAtt);
+    setup (release,   releaseLbl, "RELEASE",    juce::Slider::RotaryHorizontalVerticalDrag, id ("rel"),  relAtt);
+    setup (loopStart, lsLbl,      "LOOP START", juce::Slider::LinearHorizontal,            id ("ls"),   lsAtt);
+    setup (loopEnd,   leLbl,      "LOOP ENDE",  juce::Slider::LinearHorizontal,            id ("le"),   leAtt);
+    root.setTooltip (U ("Tonhöhe, auf der das Sample aufgenommen ist (C3 = 60). Wird beim Laden automatisch erkannt."));
+
+    loopAtt = std::make_unique<APVTS::ButtonAttachment> (s, id ("loop"), loop);
+    addAndMakeVisible (loop);
+
+    setSize (460, 300);
+    startTimerHz (20);
+    timerCallback();
+}
+
+SamplePanel::~SamplePanel() { stopTimer(); }
+
+juce::Rectangle<int> SamplePanel::waveArea() const
+{
+    return { 12, 70, getWidth() - 24, 80 };
+}
+
+void SamplePanel::rebuildPeaks()
+{
+    peaks.clear();
+    if (shown == nullptr) return;
+    const auto& d = shown->data;
+    const int w = juce::jmax (1, waveArea().getWidth());
+    const int n = d.getNumSamples();
+    for (int x = 0; x < w; ++x)
+    {
+        const int a = (int) ((juce::int64) n * x / w);
+        const int b = juce::jmax (a + 1, (int) ((juce::int64) n * (x + 1) / w));
+        auto r = d.findMinMax (0, a, juce::jmin (b, n) - a);
+        peaks.push_back ({ r.getStart(), r.getEnd() });
+    }
+}
+
+void SamplePanel::timerCallback()
+{
+    auto cur = proc.instrumentSample (track);
+    if (cur != shown || ! initialised)
+    {
+        initialised = true;
+        shown = cur;
+        rebuildPeaks();
+        nameLbl.setText (shown ? shown->name : U ("Kein Sample – interner Synth"), juce::dontSendNotification);
+        infoLbl.setText (shown ? juce::String (shown->data.getNumSamples() / shown->sampleRate, 2) + " s · "
+                                     + juce::String ((int) shown->sampleRate) + " Hz"
+                                     + (proc.lastDetection.isNotEmpty() ? U (" · Grundton: ") + proc.lastDetection : juce::String())
+                               : U ("Lade eine WAV/AIFF/FLAC – sie wird über die Tastatur transponiert."),
+                         juce::dontSendNotification);
+        clearBtn.setEnabled (shown != nullptr);
+    }
+    repaint (waveArea());
+}
+
+void SamplePanel::paint (juce::Graphics& g)
+{
+    g.fillAll (Colours::panel);
+    auto wa = waveArea().toFloat();
+    g.setColour (Colours::bg);
+    g.fillRoundedRectangle (wa, 4.0f);
+
+    const auto col = Colours::track (track);
+    if (! peaks.empty())
+    {
+        const float mid = wa.getCentreY(), h = wa.getHeight() * 0.45f;
+        g.setColour (col.withAlpha (0.8f));
+        for (size_t x = 0; x < peaks.size(); ++x)
+            g.drawVerticalLine ((int) wa.getX() + (int) x, mid - peaks[x].second * h, mid - peaks[x].first * h + 1.0f);
+
+        if (loop.getToggleState())
+        {
+            const float ls = (float) loopStart.getValue(), le = juce::jmax ((float) loopEnd.getValue(), ls + 0.01f);
+            auto region = wa.withX (wa.getX() + ls * wa.getWidth()).withWidth ((le - ls) * wa.getWidth());
+            g.setColour (Colours::gold.withAlpha (0.15f));
+            g.fillRect (region);
+            g.setColour (Colours::gold);
+            g.drawVerticalLine ((int) region.getX(), wa.getY(), wa.getBottom());
+            g.drawVerticalLine ((int) region.getRight(), wa.getY(), wa.getBottom());
+        }
+    }
+    else
+    {
+        g.setColour (Colours::dim);
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawText ("Synth", wa, juce::Justification::centred);
+    }
+}
+
+void SamplePanel::resized()
+{
+    auto r = getLocalBounds().reduced (12);
+    auto top = r.removeFromTop (26);
+    clearBtn.setBounds (top.removeFromRight (130));
+    top.removeFromRight (6);
+    loadBtn.setBounds (top.removeFromRight (130));
+    nameLbl.setBounds (top);
+    infoLbl.setBounds (r.removeFromTop (22));
+    r.removeFromTop (8 + 80 + 8); // waveform
+
+    auto row = r.removeFromTop (78);
+    auto col = row.removeFromLeft (120);
+    rootLbl.setBounds (col.removeFromTop (14));
+    root.setBounds (col.removeFromTop (26));
+    loop.setBounds (col.removeFromTop (28));
+    for (auto* pair : { &fine, &attack, &release })
+    {
+        auto c = row.removeFromLeft (100);
+        auto* lbl = pair == &fine ? &fineLbl : (pair == &attack ? &attackLbl : &releaseLbl);
+        lbl->setBounds (c.removeFromTop (14));
+        pair->setBounds (c);
+    }
+
+    r.removeFromTop (4);
+    auto loopRow = r.removeFromTop (34);
+    auto half = loopRow.getWidth() / 2;
+    auto a = loopRow.removeFromLeft (half - 6);
+    lsLbl.setBounds (a.removeFromTop (14));
+    loopStart.setBounds (a);
+    loopRow.removeFromLeft (12);
+    leLbl.setBounds (loopRow.removeFromTop (14));
+    loopEnd.setBounds (loopRow);
+}
+
 // ============================================================ Editor
 HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
@@ -260,6 +425,15 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
         auto* vol = volSliders.add (new juce::Slider (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox));
         volAtts.add (new APVTS::SliderAttachment (s, "vol" + juce::String (t), *vol));
         addAndMakeVisible (vol);
+
+        if (HipHopBeatMakerProcessor::trackTakesSample (t))
+        {
+            auto& b = instSampleBtns[(size_t) t];
+            b = std::make_unique<juce::TextButton> ("Synth");
+            b->setTooltip (U ("Eigenes Sample für ") + trackName (t) + U (" laden und einstellen"));
+            b->onClick = [this, t] { showSamplePanel (t); };
+            addAndMakeVisible (*b);
+        }
     }
 
     allTile = std::make_unique<DragTile> (proc, -1, U ("Alle Spuren ⇣ (1 Datei)"));
@@ -325,6 +499,30 @@ void HipHopBeatMakerEditor::loadSampleFor (int slot)
                           });
 }
 
+void HipHopBeatMakerEditor::showSamplePanel (int track)
+{
+    auto* b = instSampleBtns[(size_t) track].get();
+    if (b == nullptr) return;
+    auto panel = std::make_unique<SamplePanel> (proc, track, [this, track] { loadInstrumentFor (track); });
+    juce::CallOutBox::launchAsynchronously (std::move (panel), getLocalArea (b, b->getLocalBounds()), this);
+}
+
+void HipHopBeatMakerEditor::loadInstrumentFor (int track)
+{
+    chooser = std::make_unique<juce::FileChooser> (U ("Sample für ") + trackName (track),
+                                                   juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+    juce::Component::SafePointer<HipHopBeatMakerEditor> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe, track] (const juce::FileChooser& fc)
+                          {
+                              if (safe == nullptr) return;
+                              const auto f = fc.getResult();
+                              if (f.existsAsFile() && ! safe->proc.loadInstrumentSample (track, f, true))
+                                  safe->statusLbl.setText (U ("Sample konnte nicht geladen werden: ") + f.getFileName(), juce::dontSendNotification);
+                          });
+}
+
 void HipHopBeatMakerEditor::exportAndReveal (bool fullSong)
 {
     const auto folder = proc.exportSet (fullSong);
@@ -353,6 +551,20 @@ void HipHopBeatMakerEditor::timerCallback()
 
     const double beat = proc.uiBeat.load();
     for (auto* l : lanes) l->setPlayhead (beat);
+
+    for (int t = 0; t < numTracks; ++t)
+    {
+        if (auto* b = instSampleBtns[(size_t) t].get())
+        {
+            const bool has = proc.instrumentSample (t) != nullptr;
+            const juce::String text = has ? "Sample" : "Synth";
+            if (b->getButtonText() != text)
+            {
+                b->setButtonText (text);
+                b->setColour (juce::TextButton::buttonColourId, has ? Colours::track (t).withAlpha (0.45f) : Colours::panelHi);
+            }
+        }
+    }
 
     for (int i = 0; i < sampleBtns.size(); ++i)
     {
@@ -460,6 +672,11 @@ void HipHopBeatMakerEditor::resized()
         auto left = r.removeFromLeft (90);
         muteBtns[t]->setBounds (left.removeFromBottom (22));
         volSliders[t]->setBounds (left.removeFromBottom (22));
+        r.removeFromLeft (6);
+        auto sampleCol = r.removeFromLeft (64);
+        if (auto* b = instSampleBtns[(size_t) t].get())
+            b->setBounds (sampleCol.reduced (0, 9));
+        r.removeFromLeft (6);
         dragTiles[t]->setBounds (r.removeFromRight (120).reduced (0, 6));
         r.removeFromRight (8);
         lanes[t]->setBounds (r.reduced (0, 3));

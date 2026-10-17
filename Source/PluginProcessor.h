@@ -7,6 +7,7 @@
 #include "Generator.h"
 #include "SynthEngine.h"
 #include "MidiExport.h"
+#include "SampleTools.h"
 
 #include <bitset>
 
@@ -58,6 +59,14 @@ public:
     bool loadSample (int slot, const juce::File& file);
     void clearSample (int slot);
     juce::String sampleName (int slot) const;
+
+    /** Instrument samples (Bass, Keys, Pad, Lead). detectRoot: set root/fine from name + pitch analysis. */
+    bool loadInstrumentSample (int track, const juce::File& file, bool detectRoot);
+    void clearInstrumentSample (int track);
+    std::shared_ptr<const hhbm::SampleData> instrumentSample (int track) const { return engine.getInstrumentSample (track); }
+    static bool trackTakesSample (int track) { return track > 0 && track < hhbm::numTracks; }
+    juce::String lastDetection; // how the root note was found ("Dateiname", "Analyse", ...)
+    static juce::String sampleParamId (int track, const char* what) { return "s" + juce::String (track) + what; }
 
     void reroll();
     void setPreviewPlaying (bool shouldPlay) { previewPlaying = shouldPlay; }
@@ -117,6 +126,8 @@ private:
     std::atomic<float>* pSound = nullptr;
     std::atomic<float>* pMidiOut = nullptr;
     std::array<std::atomic<float>*, hhbm::numTracks> pVol {}, pMute {};
+    struct SampleParamPtrs { std::atomic<float>* root = nullptr, *fine = nullptr, *att = nullptr, *rel = nullptr, *loop = nullptr, *ls = nullptr, *le = nullptr; };
+    std::array<SampleParamPtrs, hhbm::numTracks> pSmp {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HipHopBeatMakerProcessor)
 };

@@ -63,6 +63,37 @@ private:
     juce::String label;
     bool dragStarted = false;
 };
+/** Settings popup for an instrument sample slot (Bass, Keys, Pad, Lead). */
+class SamplePanel : public juce::Component, private juce::Timer
+{
+public:
+    SamplePanel (HipHopBeatMakerProcessor& p, int track, std::function<void()> onLoad);
+    ~SamplePanel() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void rebuildPeaks();
+    juce::Rectangle<int> waveArea() const;
+
+    using APVTS = juce::AudioProcessorValueTreeState;
+    HipHopBeatMakerProcessor& proc;
+    int track;
+    std::function<void()> onLoad;
+
+    std::shared_ptr<const SampleData> shown;
+    bool initialised = false;
+    std::vector<std::pair<float, float>> peaks;
+
+    juce::TextButton loadBtn, clearBtn;
+    juce::Label nameLbl, infoLbl;
+    juce::Slider root, fine, attack, release, loopStart, loopEnd;
+    juce::Label rootLbl, fineLbl, attackLbl, releaseLbl, lsLbl, leLbl;
+    juce::ToggleButton loop { "Loop" };
+    std::unique_ptr<APVTS::SliderAttachment> rootAtt, fineAtt, attAtt, relAtt, lsAtt, leAtt;
+    std::unique_ptr<APVTS::ButtonAttachment> loopAtt;
+};
 } // namespace hhbm::ui
 
 class HipHopBeatMakerEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -79,6 +110,8 @@ private:
     void setChoice (const juce::String& id, int index);
     void loadSampleFor (int slot);
     void exportAndReveal (bool fullSong);
+    void showSamplePanel (int track);
+    void loadInstrumentFor (int track);
 
     using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -110,6 +143,7 @@ private:
     juce::OwnedArray<juce::Slider> volSliders;
     juce::OwnedArray<APVTS::ButtonAttachment> muteAtts;
     juce::OwnedArray<APVTS::SliderAttachment> volAtts;
+    std::array<std::unique_ptr<juce::TextButton>, hhbm::numTracks> instSampleBtns;
 
     // bottom
     std::unique_ptr<hhbm::ui::DragTile> allTile;

@@ -45,6 +45,7 @@ target_sources(HipHopBeatMaker PRIVATE
     Source/Generator.cpp
     Source/SynthEngine.cpp
     Source/MidiExport.cpp
+    Source/SampleTools.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp)
 
@@ -72,7 +73,8 @@ if(HHBM_BUILD_TESTS)
         Tests/RenderTest.cpp
         Source/Generator.cpp
         Source/SynthEngine.cpp
-        Source/MidiExport.cpp)
+        Source/MidiExport.cpp
+        Source/SampleTools.cpp)
     target_include_directories(HHBMRenderTest PRIVATE Source)
     target_compile_definitions(HHBMRenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(HHBMRenderTest PRIVATE juce::juce_audio_basics juce::juce_audio_formats

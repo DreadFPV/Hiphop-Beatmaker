@@ -19,6 +19,12 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
 - **Play** = Vorhören ohne Host. Läuft Cubase, folgt das Plugin dem Host-Transport und Tempo.
 - **Sounds** aus = nur MIDI · **MIDI Out** = Noten zusätzlich an den Host senden
 - **Drum-Samples:** Klick auf einen Slot lädt ein eigenes WAV/AIFF/FLAC, Shift+Klick = zurück zum Synth-Sound
+- **Instrument-Samples (Bass, Keys, Pad, Lead):** Button „Synth/Sample" neben der Spur öffnet das Sample-Panel
+  - Ein Sample wird über die Tastatur transponiert
+  - **Grundton** wird automatisch erkannt: Notenname im Dateinamen (z. B. `808 Boom F1.wav`, C3 = 60) hat Vorrang, die Oktave und Feinstimmung kommen aus der Tonhöhen-Analyse
+  - **Fine** (±100 Cent), **Attack/Release**, **Loop** mit Start/Ende und Crossfade (Pad standardmässig mit Loop)
+  - 808-Glides funktionieren auch mit eigenem Sample (Trap/Drill)
+  - Tuning 432 Hz wirkt auch auf Samples
 
 ## MIDI-Export
 - **„Drums MIDI ⇣" usw. in Cubase ziehen** → eine Spur pro Instrument

@@ -101,11 +101,34 @@ struct Patch
     float gain = 0.5f;
 };
 
+// ============================================================ samples
+/** A loaded audio file (drum one-shot or instrument sample). */
+struct SampleData
+{
+    juce::AudioBuffer<float> data;
+    double sampleRate = 44100;
+    juce::String name;
+};
+using DrumSample = SampleData;
+
+/** Playback settings of an instrument sample slot. */
+struct SampleParams
+{
+    float root = 60;        // MIDI note of the recorded pitch
+    float fineCents = 0;    // -100..100
+    float attack = 0.002f;  // seconds
+    float release = 0.15f;  // seconds
+    bool loop = false;
+    float loopStart = 0.3f; // 0..1 of the sample
+    float loopEnd = 0.9f;   // 0..1 of the sample
+};
+
 class Voice
 {
 public:
     void prepare (double sampleRate) { sr = (float) sampleRate; }
-    void start (int note, float vel, const Patch& p, float freq, bool legato);
+    void start (int note, float vel, const Patch& p, float freq, bool legato,
+                std::shared_ptr<const SampleData> sample = nullptr, const SampleParams& sp = {});
     void glideTo (int note, float freq);
     void release() { env.noteOff(); }
     void kill()    { env.stage = Adsr::Idle; env.value = 0; note = -1; }
@@ -117,7 +140,13 @@ public:
 
 private:
     float poly (float t, float dt) const;
+    void renderSample (float* l, float* r, int n);
+    float readSample (int ch, double pos) const;
     float sr = 44100;
+    std::shared_ptr<const SampleData> smp;
+    SampleParams sp;
+    double spos = 0;
+    int loopA = 0, loopB = 0, xfade = 0;
     Patch patch;
     Adsr env;
     float vel = 1, freq = 440, targetFreq = 440, glideCoef = 0;
@@ -127,12 +156,6 @@ private:
 };
 
 // ============================================================ drums
-struct DrumSample
-{
-    juce::AudioBuffer<float> data;
-    double sampleRate = 44100;
-    juce::String name;
-};
 
 class DrumVoice
 {
@@ -173,6 +196,11 @@ public:
     void setSample (int slot, std::shared_ptr<const DrumSample> s);
     std::shared_ptr<const DrumSample> getSample (int slot) const;
 
+    /** Instrument samples for Bass, Keys, Pad, Lead (nullptr = built-in synth). */
+    void setInstrumentSample (int track, std::shared_ptr<const SampleData> s);
+    std::shared_ptr<const SampleData> getInstrumentSample (int track) const;
+    void setSampleParams (int track, const SampleParams& p) { instParams[(size_t) track] = p; }
+
     void render (juce::AudioBuffer<float>& buffer, int start, int num);
 
 private:
@@ -187,6 +215,8 @@ private:
 
     std::array<DrumVoice, 24> drumVoices;
     std::array<std::shared_ptr<const DrumSample>, numDrumSlots> samples;
+    std::array<std::shared_ptr<const SampleData>, numTracks> instSamples;
+    std::array<SampleParams, numTracks> instParams;
     mutable juce::SpinLock sampleLock;
 
     // mono synths keep a note stack for legato / 808 glides

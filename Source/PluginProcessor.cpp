@@ -42,6 +42,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout HipHopBeatMakerProcessor::cr
         l.add (std::make_unique<AudioParameterFloat> (ParameterID { "vol" + String (t), 1 }, n + " Volume", NormalisableRange<float> (0, 1.5f), 1.0f));
         l.add (std::make_unique<AudioParameterBool>  (ParameterID { "mute" + String (t), 1 }, n + " Mute", false));
     }
+
+    // instrument sample slots
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const String n = String (trackName (t)) + " Sample ";
+        auto id = [t] (const char* w) { return ParameterID { sampleParamId (t, w), 1 }; };
+        l.add (std::make_unique<AudioParameterInt> (id ("root"), n + "Root", 0, 127, 60, AudioParameterIntAttributes()
+                   .withStringFromValueFunction ([] (int v, int) { return SampleTools::noteName (v); })));
+        auto secs = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+        {
+            return v < 1.0f ? String (roundToInt (v * 1000.0f)) + " ms" : String (v, 2) + " s";
+        });
+        l.add (std::make_unique<AudioParameterFloat> (id ("fine"), n + "Fine", NormalisableRange<float> (-100, 100, 1), 0,
+                   AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v)) + " ct"; })));
+        l.add (std::make_unique<AudioParameterFloat> (id ("att"), n + "Attack", NormalisableRange<float> (0.001f, 2.0f, 0, 0.35f), 0.002f, secs));
+        l.add (std::make_unique<AudioParameterFloat> (id ("rel"), n + "Release", NormalisableRange<float> (0.01f, 4.0f, 0, 0.35f), t == 3 ? 0.8f : 0.15f, secs));
+        l.add (std::make_unique<AudioParameterBool> (id ("loop"), n + "Loop", t == 3));
+        auto pct = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (roundToInt (v * 100.0f)) + " %"; });
+        l.add (std::make_unique<AudioParameterFloat> (id ("ls"), n + "Loop Start", NormalisableRange<float> (0, 0.98f), 0.3f, pct));
+        l.add (std::make_unique<AudioParameterFloat> (id ("le"), n + "Loop End", NormalisableRange<float> (0.02f, 1.0f), 0.9f, pct));
+    }
     return l;
 }
 
@@ -60,6 +81,17 @@ HipHopBeatMakerProcessor::HipHopBeatMakerProcessor()
     {
         pVol[(size_t) t]  = apvts.getRawParameterValue ("vol" + juce::String (t));
         pMute[(size_t) t] = apvts.getRawParameterValue ("mute" + juce::String (t));
+        if (trackTakesSample (t))
+        {
+            auto& sp = pSmp[(size_t) t];
+            sp.root = apvts.getRawParameterValue (sampleParamId (t, "root"));
+            sp.fine = apvts.getRawParameterValue (sampleParamId (t, "fine"));
+            sp.att  = apvts.getRawParameterValue (sampleParamId (t, "att"));
+            sp.rel  = apvts.getRawParameterValue (sampleParamId (t, "rel"));
+            sp.loop = apvts.getRawParameterValue (sampleParamId (t, "loop"));
+            sp.ls   = apvts.getRawParameterValue (sampleParamId (t, "ls"));
+            sp.le   = apvts.getRawParameterValue (sampleParamId (t, "le"));
+        }
     }
 
     for (auto* id : genParams)
@@ -212,6 +244,19 @@ void HipHopBeatMakerProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     engine.setTuning (pTuning->load() > 0.5f ? 432.0f : 440.0f);
     for (int t = 0; t < numTracks; ++t)
         engine.setTrackGain (t, pMute[(size_t) t]->load() > 0.5f ? 0.0f : pVol[(size_t) t]->load());
+    for (int t = 1; t < numTracks; ++t)
+    {
+        const auto& sp = pSmp[(size_t) t];
+        SampleParams prm;
+        prm.root = sp.root->load();
+        prm.fineCents = sp.fine->load();
+        prm.attack = sp.att->load();
+        prm.release = sp.rel->load();
+        prm.loop = sp.loop->load() > 0.5f;
+        prm.loopStart = sp.ls->load();
+        prm.loopEnd = juce::jmax (sp.le->load(), prm.loopStart + 0.01f);
+        engine.setSampleParams (t, prm);
+    }
 
     // ---------------------------------------------------- transport
     double bpm = pBpm->load();
@@ -397,8 +442,72 @@ juce::String HipHopBeatMakerProcessor::sampleName (int slot) const
     return s ? s->name : juce::String();
 }
 
+bool HipHopBeatMakerProcessor::loadInstrumentSample (int track, const juce::File& file, bool detectRoot)
+{
+    if (! trackTakesSample (track)) return false;
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr) return false;
+
+    const auto maxLen = (juce::int64) (reader->sampleRate * 30.0);
+    const int len = (int) juce::jmin (reader->lengthInSamples, maxLen);
+    if (len <= 64) return false;
+
+    auto sd = std::make_shared<SampleData>();
+    sd->data.setSize ((int) juce::jlimit (1u, 2u, reader->numChannels), len);
+    reader->read (&sd->data, 0, len, 0, true, true);
+    sd->sampleRate = reader->sampleRate;
+    sd->name = file.getFileNameWithoutExtension();
+    const float peak = sd->data.getMagnitude (0, len);
+    if (peak > 0.0001f) sd->data.applyGain (0.9f / peak); // normalise
+
+    if (detectRoot)
+    {
+        const int nameRoot = SampleTools::rootFromName (sd->name);
+        const float pitch = SampleTools::detectPitch (sd->data, sd->sampleRate);
+        int root = 60;
+        float fine = 0;
+        if (nameRoot >= 0 && pitch >= 0)
+        {
+            // trust the note name, take the octave from the analysis
+            root = nameRoot + 12 * (int) std::round ((pitch - (float) nameRoot) / 12.0f);
+            if (std::abs (pitch - (float) root) < 0.5f) fine = (pitch - (float) root) * 100.0f;
+        }
+        else if (pitch >= 0) { root = (int) std::round (pitch); fine = (pitch - (float) root) * 100.0f; }
+        else if (nameRoot >= 0) root = nameRoot;
+
+        auto set = [this, track] (const char* what, float v)
+        {
+            if (auto* p = apvts.getParameter (sampleParamId (track, what)))
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+        };
+        set ("root", (float) juce::jlimit (0, 127, root));
+        set ("fine", juce::jlimit (-100.0f, 100.0f, std::round (fine)));
+        lastDetection = nameRoot >= 0 ? juce::String ("Dateiname") : (pitch >= 0 ? juce::String ("Analyse") : juce::String ("nicht erkannt"));
+    }
+
+    engine.setInstrumentSample (track, sd);
+    apvts.state.getOrCreateChildWithName ("InstSamples", nullptr)
+        .setProperty ("track" + juce::String (track), file.getFullPathName(), nullptr);
+    return true;
+}
+
+void HipHopBeatMakerProcessor::clearInstrumentSample (int track)
+{
+    engine.setInstrumentSample (track, nullptr);
+    apvts.state.getOrCreateChildWithName ("InstSamples", nullptr).removeProperty ("track" + juce::String (track), nullptr);
+}
+
 void HipHopBeatMakerProcessor::reloadSamplesFromState()
 {
+    auto inst = apvts.state.getChildWithName ("InstSamples");
+    for (int t = 1; t < numTracks; ++t)
+    {
+        engine.setInstrumentSample (t, nullptr);
+        if (! inst.isValid()) continue;
+        const juce::File f (inst.getProperty ("track" + juce::String (t)).toString());
+        if (f.existsAsFile()) loadInstrumentSample (t, f, false);
+    }
+
     auto node = apvts.state.getChildWithName ("Samples");
     for (int i = 0; i < numDrumSlots; ++i)
     {
