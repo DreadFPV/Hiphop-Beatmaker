@@ -37,6 +37,19 @@ Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum 
 
 Alle diese Funktionen gibt es auch im Plugin.
 
+## Noten-Editor
+**Klick auf eine Spur** (Mini-Notenansicht) öffnet den Editor – im Full Song wird die angeklickte Section geöffnet.
+- Tabs oben: Instrument (Drums, Bass, Keys, Pad, Lead) und Section (Intro … Outro; • = bearbeitet)
+- **Drums** als Raster mit Instrument-Namen, alle anderen als Piano-Roll (C3 = 60)
+- Doppelklick = neue Note · ziehen = verschieben · rechter Rand = Länge · Rechtsklick = löschen · Rahmen = Auswahl
+- Raster 1/4 … 1/32 inkl. Triolen · **Quantize** · **Velocity**-Leiste unten
+- **Kopieren / Einfügen / Duplizieren / Löschen** (auch Strg/Cmd+C/V/D, Entf) · **Undo/Redo** (Strg/Cmd+Z, Shift+Z)
+- Pfeile ↑/↓ transponieren (Shift = Oktave), ←/→ verschieben
+- Bearbeitete Spuren sind **gesperrt** (Schloss in der Spur): Seed, Style, Key usw. ändern sie nicht mehr.
+  **„Neu generieren"** gibt die Spur wieder an den Generator zurück.
+- Änderungen gelten pro Section – eine bearbeitete Hook erscheint in jeder Hook des Full Songs
+- Drag & Drop, MIDI- und WAV-Export sowie Projekte enthalten die bearbeiteten Noten
+
 ## Sound-Editor
 Button **„Sound"** neben jeder Spur öffnet den Editor (Tabs oben wechseln das Instrument):
 - **Bass, Keys, Pad, Lead – Synth:**

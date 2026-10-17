@@ -1,5 +1,6 @@
 // Runs the real processor without a host: keyboard, loop, WAV export, projects.
 #include "PluginProcessor.h"
+namespace hhbm { inline bool operator== (const Note& a, const Note& b) { return a.pitch == b.pitch && a.start == b.start; } inline bool operator!= (const std::vector<Note>& a, const std::vector<Note>& b) { return a.size() != b.size(); } }
 
 static int failures = 0;
 #define CHECK(c, msg) do { if (! (c)) { ++failures; std::cout << "FAIL: " << msg << "\n"; } else std::cout << "ok:   " << msg << "\n"; } while (0)
@@ -95,6 +96,58 @@ int main()
     CHECK (std::abs (cut - 4321.0f) < 5.0f && (int) p.apvts.getRawParameterValue ("seed")->load() == 77, "values restored (cutoff " << cut << ")");
 
     folder.deleteRecursively();
+
+    // 7. note editing
+    {
+        using namespace hhbm;
+        setP (p, "section", (int) Section::Hook);
+        setP (p, "seed", 5);
+        p.regenerateNow();
+        const int H = (int) Section::Hook, B = (int) Track::Bass;
+        auto generated = p.sectionNotes (H, B);
+        CHECK (! p.isLocked (H, B) && ! generated.empty(), "bass hook generated (" << generated.size() << " notes)");
+
+        std::vector<Note> mine { { 40, 0.0, 1.0, 0.9f }, { 43, 2.0, 0.5, 0.7f }, { 47, 9.0, 3.0, 0.8f } };
+        p.setEditedNotes (H, B, mine);
+        CHECK (p.isLocked (H, B), "edited track is locked");
+        auto pat = p.getPattern();
+        CHECK (pat->tracks[(size_t) B].size() == 3 && pat->tracks[(size_t) B][1].pitch == 43, "pattern uses edited notes");
+
+        setP (p, "seed", 6); p.regenerateNow();
+        CHECK (p.getPattern()->tracks[(size_t) B].size() == 3, "seed change keeps locked track");
+        CHECK (p.sectionNotes (H, (int) Track::Keys) != std::vector<Note>() , "other tracks still generate");
+
+        setP (p, "section", (int) Section::FullSong); p.regenerateNow();
+        int hookBass = 0;
+        for (auto& n : p.getPattern()->tracks[(size_t) B]) if (n.pitch == 47 && std::abs (n.length - 3.0) < 1e-6) ++hookBass;
+        CHECK (hookBass == 3, "every hook in full song uses the edit (" << hookBass << ")");
+
+        // MIDI export contains the edit
+        setP (p, "section", H); p.regenerateNow();
+        auto dir = p.exportSet (false);
+        auto bassFile = dir.findChildFiles (juce::File::findFiles, false, "*_Bass.mid");
+        juce::MidiFile mf;
+        juce::FileInputStream in (bassFile[0]);
+        mf.readFrom (in);
+        int ons = 0;
+        for (auto* ev : *mf.getTrack (0)) if (ev->message.isNoteOn()) ++ons;
+        CHECK (ons == 3, "exported bass MIDI has the 3 edited notes");
+        dir.deleteRecursively();
+
+        // undo / redo
+        CHECK (p.undoEdit() && ! p.isLocked (H, B), "undo removes the edit");
+        CHECK (p.redoEdit() && p.isLocked (H, B), "redo restores it");
+
+        // project round trip
+        auto proj2 = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("edit.hhbeat");
+        p.saveProject (proj2);
+        p.unlockTrack (H, B);
+        CHECK (! p.isLocked (H, B), "unlock -> generated again");
+        p.loadProject (proj2);
+        auto back = p.sectionNotes (H, B);
+        CHECK (p.isLocked (H, B) && back.size() == 3 && back[2].pitch == 47 && std::abs (back[2].length - 3.0) < 1e-4, "edits survive save/load");
+        proj2.deleteFile();
+    }
     std::cout << (failures == 0 ? "ALL OK" : "FAILURES: " + std::to_string (failures)) << "\n";
     return failures == 0 ? 0 : 1;
 }

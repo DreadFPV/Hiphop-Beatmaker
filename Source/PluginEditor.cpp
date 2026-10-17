@@ -124,12 +124,29 @@ void Lane::paint (juce::Graphics& g)
         }
     }
 
+    // padlock when the user edited this track
+    if (proc.isLocked ((int) proc.apvts.getRawParameterValue ("section")->load(), track))
+    {
+        auto lk = juce::Rectangle<float> (b.getRight() - 18, b.getY() + 4, 12, 13);
+        g.setColour (Colours::gold);
+        juce::Path shackle;
+        shackle.addCentredArc (lk.getCentreX(), lk.getY() + 5, 3.5f, 4.0f, 0, -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi, true);
+        g.strokePath (shackle, juce::PathStrokeType (1.6f));
+        g.fillRoundedRectangle (lk.withTrimmedTop (5), 1.5f);
+    }
+
     if (playhead >= 0)
     {
         const float x = b.getX() + (float) playhead * wPerBeat;
         g.setColour (Colours::text.withAlpha (0.8f));
         g.drawVerticalLine ((int) x, b.getY(), b.getBottom());
     }
+}
+
+void Lane::mouseDown (const juce::MouseEvent& e)
+{
+    if (onClick && pattern && pattern->lengthBeats > 0)
+        onClick (e.position.x / (float) getWidth() * pattern->lengthBeats);
 }
 
 // ============================================================ DragTile
@@ -693,6 +710,8 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
     for (int t = 0; t < numTracks; ++t)
     {
         auto* lane = lanes.add (new Lane (proc, t));
+        lane->onClick = [this, t] (double beat) { showNoteEditor (t, beat); };
+        lane->setTooltip (U ("Klicken: Noten bearbeiten"));
         addAndMakeVisible (lane);
 
         auto* tile = dragTiles.add (new DragTile (proc, t, juce::String (trackName (t)) + U (" MIDI ⇣")));
@@ -783,6 +802,10 @@ HipHopBeatMakerEditor::HipHopBeatMakerEditor (HipHopBeatMakerProcessor& p)
     soundEditor->onClose = [this] { soundEditor->setVisible (false); };
     soundEditor->askName = [this] (const juce::String& t, const juce::String& d, std::function<void (juce::String)> done) { askName (t, d, std::move (done)); };
     addChildComponent (*soundEditor);
+
+    noteEditor = std::make_unique<NoteEditor> (proc);
+    noteEditor->onClose = [this] { noteEditor->setVisible (false); };
+    addChildComponent (*noteEditor);
     proc.editorOpen = true;
 
     statusLbl.setFont (juce::FontOptions (12.0f));
@@ -833,9 +856,26 @@ void HipHopBeatMakerEditor::showSoundEditor (int track)
         soundEditor->setVisible (false);
         return;
     }
+    noteEditor->setVisible (false);
     soundEditor->setTrack (track, track > 0 && proc.instrumentSample (track) != nullptr);
     soundEditor->setVisible (true);
     soundEditor->toFront (false);
+}
+
+void HipHopBeatMakerEditor::showNoteEditor (int track, double beat)
+{
+    int section = (int) proc.apvts.getRawParameterValue ("section")->load();
+    if (section == (int) Section::FullSong)
+    {
+        section = (int) Section::Verse;
+        if (auto pat = proc.getPattern())
+            for (auto& m : pat->markers)
+                if (beat >= m.start && beat < m.start + m.length) section = m.section;
+    }
+    soundEditor->setVisible (false);
+    noteEditor->setVisible (true);
+    noteEditor->toFront (true);
+    noteEditor->open (track, section);
 }
 
 void HipHopBeatMakerEditor::askName (const juce::String& title, const juce::String& def, std::function<void (juce::String)> done)
@@ -1230,6 +1270,7 @@ void HipHopBeatMakerEditor::resized()
     // lanes
     area.removeFromTop (8);
     if (soundEditor) soundEditor->setBounds (area.getX(), area.getY(), area.getWidth(), getHeight() - area.getY() - 10);
+    if (noteEditor) noteEditor->setBounds (area.getX(), area.getY(), area.getWidth(), getHeight() - area.getY() - 10);
     for (int t = 0; t < numTracks; ++t)
     {
         auto r = area.removeFromTop (54);

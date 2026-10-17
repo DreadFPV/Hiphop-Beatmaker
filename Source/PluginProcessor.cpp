@@ -214,7 +214,7 @@ Settings HipHopBeatMakerProcessor::currentSettings() const
 void HipHopBeatMakerProcessor::regenerateNow()
 {
     auto c = std::make_shared<Compiled>();
-    auto pat = std::make_shared<Pattern> (Generator::generate (currentSettings()));
+    auto pat = std::make_shared<Pattern> (Generator::generate (currentSettings(), &edits));
     const double len = pat->lengthBeats;
 
     for (int t = 0; t < numTracks; ++t)
@@ -542,7 +542,7 @@ juce::File HipHopBeatMakerProcessor::exportSet (bool fullSong)
 {
     auto s = currentSettings();
     if (fullSong) s.section = (int) Section::FullSong;
-    const auto p = Generator::generate (s);
+    const auto p = Generator::generate (s, &edits);
     const double bpm = exportBpm();
     const auto base = MidiExport::baseName (s, bpm);
 
@@ -572,14 +572,128 @@ juce::File HipHopBeatMakerProcessor::writeDragFile (int track)
     return MidiExport::write (mf, file) ? file : juce::File();
 }
 
+// ============================================================ note editing
+std::vector<Note> HipHopBeatMakerProcessor::sectionNotes (int section, int track) const
+{
+    if (edits.has (section, track))
+        return *edits.notes[(size_t) section][(size_t) track];
+    auto s = currentSettings();
+    s.section = section;
+    return Generator::generate (s).tracks[(size_t) track];
+}
+
+void HipHopBeatMakerProcessor::applyOverride (int section, int track, std::shared_ptr<const std::vector<Note>> notes)
+{
+    edits.notes[(size_t) section][(size_t) track] = std::move (notes);
+    storeEdit (section, track);
+    regenerateNow();
+}
+
+void HipHopBeatMakerProcessor::setEditedNotes (int section, int track, std::vector<Note> notes)
+{
+    auto before = edits.notes[(size_t) section][(size_t) track];
+    const double len = Generator::sectionBars (section) * 4.0;
+    notes.erase (std::remove_if (notes.begin(), notes.end(), [len] (const Note& n)
+                 { return n.start < 0 || n.start >= len || n.pitch < 0 || n.pitch > 127; }), notes.end());
+    for (auto& n : notes)
+    {
+        n.length = juce::jlimit (0.01, len - n.start, n.length);
+        n.velocity = juce::jlimit (0.01f, 1.0f, n.velocity);
+    }
+    std::sort (notes.begin(), notes.end(), [] (const Note& a, const Note& b) { return a.start < b.start; });
+    auto after = std::make_shared<const std::vector<Note>> (std::move (notes));
+    undoStack.push_back ({ section, track, before, after });
+    if (undoStack.size() > 200) undoStack.erase (undoStack.begin());
+    redoStack.clear();
+    applyOverride (section, track, after);
+}
+
+void HipHopBeatMakerProcessor::unlockTrack (int section, int track)
+{
+    auto before = edits.notes[(size_t) section][(size_t) track];
+    if (before == nullptr) return;
+    undoStack.push_back ({ section, track, before, nullptr });
+    redoStack.clear();
+    applyOverride (section, track, nullptr);
+}
+
+bool HipHopBeatMakerProcessor::undoEdit()
+{
+    if (undoStack.empty()) return false;
+    auto a = undoStack.back();
+    undoStack.pop_back();
+    redoStack.push_back (a);
+    applyOverride (a.section, a.track, a.before);
+    lastUndoTarget = { a.section, a.track };
+    return true;
+}
+
+bool HipHopBeatMakerProcessor::redoEdit()
+{
+    if (redoStack.empty()) return false;
+    auto a = redoStack.back();
+    redoStack.pop_back();
+    undoStack.push_back (a);
+    applyOverride (a.section, a.track, a.after);
+    lastUndoTarget = { a.section, a.track };
+    return true;
+}
+
+bool HipHopBeatMakerProcessor::isLocked (int section, int track) const
+{
+    if (section == (int) Section::FullSong)
+    {
+        for (int s = 0; s < 5; ++s)
+            if (edits.has (s, track)) return true;
+        return false;
+    }
+    return edits.has (section, track);
+}
+
+void HipHopBeatMakerProcessor::storeEdit (int section, int track)
+{
+    auto node = apvts.state.getOrCreateChildWithName ("Edits", nullptr);
+    const juce::String key = "s" + juce::String (section) + "t" + juce::String (track);
+    const auto& n = edits.notes[(size_t) section][(size_t) track];
+    if (n == nullptr) { node.removeProperty (key, nullptr); return; }
+    juce::String txt;
+    for (const auto& x : *n)
+        txt << x.pitch << " " << juce::String (x.start, 5) << " " << juce::String (x.length, 5) << " " << juce::String (x.velocity, 3) << ";";
+    node.setProperty (key, txt.isEmpty() ? juce::String ("-") : txt, nullptr);
+}
+
+void HipHopBeatMakerProcessor::loadEditsFromState()
+{
+    edits = {};
+    undoStack.clear();
+    redoStack.clear();
+    auto node = apvts.state.getChildWithName ("Edits");
+    if (! node.isValid()) return;
+    for (int s = 0; s < 5; ++s)
+        for (int t = 0; t < numTracks; ++t)
+        {
+            const juce::String key = "s" + juce::String (s) + "t" + juce::String (t);
+            if (! node.hasProperty (key)) continue;
+            std::vector<Note> notes;
+            for (auto& item : juce::StringArray::fromTokens (node.getProperty (key).toString(), ";", {}))
+            {
+                auto f = juce::StringArray::fromTokens (item.trim(), " ", {});
+                if (f.size() < 4) continue;
+                notes.push_back ({ f[0].getIntValue(), f[1].getDoubleValue(), f[2].getDoubleValue(), f[3].getFloatValue() });
+            }
+            edits.notes[(size_t) s][(size_t) t] = std::make_shared<const std::vector<Note>> (std::move (notes));
+        }
+}
+
 // ============================================================ audio export
 bool HipHopBeatMakerProcessor::startAudioRender (bool fullSong, bool mix, bool stems)
 {
     if (renderBusy.exchange (true)) return false;
     renderProgress = 0.0f;
-    renderPool.addJob ([this, fullSong, mix, stems]
+    const Overrides snapshot = edits; // copy of shared pointers – safe to read on the worker
+    renderPool.addJob ([this, fullSong, mix, stems, snapshot]
     {
-        const auto folder = renderAudioNow (fullSong, mix, stems);
+        const auto folder = renderAudioNow (fullSong, mix, stems, snapshot);
         {
             const juce::SpinLock::ScopedLockType l (renderLock);
             renderFolder = folder;
@@ -591,11 +705,11 @@ bool HipHopBeatMakerProcessor::startAudioRender (bool fullSong, bool mix, bool s
     return true;
 }
 
-juce::File HipHopBeatMakerProcessor::renderAudioNow (bool fullSong, bool mix, bool stems)
+juce::File HipHopBeatMakerProcessor::renderAudioNow (bool fullSong, bool mix, bool stems, const Overrides& ov)
 {
     auto s = currentSettings();
     if (fullSong) s.section = (int) Section::FullSong;
-    const auto pat = Generator::generate (s);
+    const auto pat = Generator::generate (s, &ov);
     const double bpm = exportBpm();
     const double rate = 48000.0;
     const auto base = MidiExport::baseName (s, bpm);
@@ -1012,6 +1126,7 @@ void HipHopBeatMakerProcessor::setStateInformation (const void* data, int sizeIn
             lastStyle = (int) pStyle->load();
             pendingStyleChange = {};
             if (! hasSound) loadStyleSound (lastStyle); // project from an older version
+            loadEditsFromState();
             reloadSamplesFromState();
             regenerateNow();
         }

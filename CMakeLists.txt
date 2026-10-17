@@ -39,7 +39,7 @@ juce_add_plugin(HipHopBeatMaker
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
     VST3_CATEGORIES Instrument Drum Generator
@@ -51,7 +51,8 @@ target_sources(HipHopBeatMaker PRIVATE
     Source/MidiExport.cpp
     Source/SampleTools.cpp
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/NoteEditor.cpp)
 
 target_compile_definitions(HipHopBeatMaker PUBLIC
     JUCE_WEB_BROWSER=0
@@ -91,7 +92,8 @@ if(HHBM_BUILD_TESTS)
         Source/MidiExport.cpp
         Source/SampleTools.cpp
         Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp)
+        Source/PluginEditor.cpp
+    Source/NoteEditor.cpp)
     target_include_directories(HHBMProcessorTest PRIVATE Source)
     target_compile_definitions(HHBMProcessorTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Name="HHBM")
     target_link_libraries(HHBMProcessorTest PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp

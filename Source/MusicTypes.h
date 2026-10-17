@@ -3,6 +3,7 @@
 #include <array>
 #include <vector>
 #include <cstdint>
+#include <memory>
 
 namespace hhbm
 {
@@ -145,6 +146,16 @@ struct Pattern
     double lengthBeats = 16.0;
     std::array<std::vector<Note>, numTracks> tracks;
     std::vector<SectionMarker> markers; // filled for Full Song
+};
+
+/** User-edited notes per section (0..4) and track; nullptr = generated. Notes are section-relative. */
+struct Overrides
+{
+    std::array<std::array<std::shared_ptr<const std::vector<Note>>, numTracks>, 5> notes;
+    bool has (int section, int track) const
+    {
+        return section >= 0 && section < 5 && track >= 0 && track < numTracks && notes[(size_t) section][(size_t) track] != nullptr;
+    }
 };
 
 struct Settings

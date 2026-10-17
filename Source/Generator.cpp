@@ -155,7 +155,7 @@ std::vector<DrumLine> drumLines (Style st)
 class Builder
 {
 public:
-    Builder (const Settings& s) : set (s), st ((Style) s.style), harm { s.key, s.scale } {}
+    Builder (const Settings& s, const Overrides* o) : set (s), st ((Style) s.style), harm { s.key, s.scale }, edits (o) {}
 
     void buildSection (Pattern& out, int section, double offset, int occurrence)
     {
@@ -181,6 +181,18 @@ public:
 
         for (int tr = 0; tr < numTracks; ++tr)
         {
+            if (edits != nullptr && edits->has (section, tr))
+            {
+                // user-edited (locked) track: exact notes, no groove / humanize
+                for (auto n : *edits->notes[(size_t) section][(size_t) tr])
+                {
+                    if (n.start >= len || n.start < 0) continue;
+                    n.length = std::max (0.01, std::min (n.length, len - n.start));
+                    n.start += offset;
+                    out.tracks[(size_t) tr].push_back (n);
+                }
+                continue;
+            }
             for (auto n : t[(size_t) tr])
             {
                 groove (n, tr, hr);
@@ -198,6 +210,7 @@ private:
     const Settings& set;
     Style st;
     Harmony harm;
+    const Overrides* edits = nullptr;
 
     // ---------------------------------------------------------------- groove
     double swingDelay() const
@@ -704,7 +717,7 @@ const std::vector<int>& Generator::songOrder()
     return o;
 }
 
-Pattern Generator::generate (const Settings& s)
+Pattern Generator::generate (const Settings& s, const Overrides* edits)
 {
     Settings safe = s;
     safe.style = std::clamp (s.style, 0, numStyles - 1);
@@ -713,7 +726,7 @@ Pattern Generator::generate (const Settings& s)
     safe.key = ((s.key % 12) + 12) % 12;
 
     Pattern p;
-    Builder b (safe);
+    Builder b (safe, edits);
 
     if (safe.section == (int) Section::FullSong)
     {

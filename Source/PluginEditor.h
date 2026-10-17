@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
+#include "NoteEditor.h"
 
 namespace hhbm::ui
 {
@@ -31,13 +32,16 @@ public:
 };
 
 /** Mini piano-roll of one track with playhead. */
-class Lane : public juce::Component
+class Lane : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     Lane (HipHopBeatMakerProcessor& p, int t) : proc (p), track (t) {}
     void paint (juce::Graphics&) override;
     void setPattern (std::shared_ptr<const Pattern> p) { pattern = std::move (p); repaint(); }
     void setPlayhead (double beat) { if (beat != playhead) { playhead = beat; repaint(); } }
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseMove (const juce::MouseEvent&) override { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void (double beat)> onClick;
 
 private:
     HipHopBeatMakerProcessor& proc;
@@ -165,6 +169,7 @@ private:
     void loadSampleFor (int slot);
     void exportAndReveal (bool fullSong);
     void showSoundEditor (int track);
+    void showNoteEditor (int track, double beat);
     void showProfileMenu();
     void askName (const juce::String& title, const juce::String& def, std::function<void (juce::String)> done);
     void showStyleDialog();
@@ -215,6 +220,7 @@ private:
 
     juce::Label statusLbl;
     std::unique_ptr<hhbm::ui::SoundEditor> soundEditor;
+    std::unique_ptr<hhbm::ui::NoteEditor> noteEditor;
     juce::TextButton profileBtn, projectBtn, audioBtn;
     juce::ToggleButton loopBtn { "Loop" };
     std::unique_ptr<APVTS::ButtonAttachment> loopAtt;

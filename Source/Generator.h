@@ -9,7 +9,7 @@ namespace hhbm
 class Generator
 {
 public:
-    static Pattern generate (const Settings& s);
+    static Pattern generate (const Settings& s, const Overrides* edits = nullptr);
 
     static int sectionBars (int section);
 

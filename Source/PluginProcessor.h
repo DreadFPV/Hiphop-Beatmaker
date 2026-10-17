@@ -115,6 +115,20 @@ public:
     std::atomic<int> renderCounter { 0 };
     juce::File lastRenderFolder() const { const juce::SpinLock::ScopedLockType l (renderLock); return renderFolder; }
 
+    // ------------------------------------------------------------ note editing (message thread)
+    /** Notes of one section/track as shown in the editor (edited or generated, section-relative). */
+    std::vector<hhbm::Note> sectionNotes (int section, int track) const;
+    /** Stores user notes -> track becomes locked (undoable). */
+    void setEditedNotes (int section, int track, std::vector<hhbm::Note> notes);
+    /** Back to generated notes (undoable). */
+    void unlockTrack (int section, int track);
+    bool isLocked (int section, int track) const;
+    bool undoEdit();
+    bool redoEdit();
+    bool canUndo() const { return ! undoStack.empty(); }
+    bool canRedo() const { return ! redoStack.empty(); }
+    std::pair<int, int> lastUndoTarget { -1, -1 };
+
     // ------------------------------------------------------------ projects
     bool saveProject (const juce::File& f);
     bool loadProject (const juce::File& f);
@@ -138,8 +152,14 @@ private:
         bool live = false;  // from the MIDI keyboard
     };
     std::vector<Event> live;
+    hhbm::Overrides edits;
+    struct EditAction { int section, track; std::shared_ptr<const std::vector<hhbm::Note>> before, after; };
+    std::vector<EditAction> undoStack, redoStack;
+    void applyOverride (int section, int track, std::shared_ptr<const std::vector<hhbm::Note>> notes);
+    void storeEdit (int section, int track);
+    void loadEditsFromState();
     std::atomic<bool> restartRequested { false };
-    juce::File renderAudioNow (bool fullSong, bool mix, bool stems);
+    juce::File renderAudioNow (bool fullSong, bool mix, bool stems, const hhbm::Overrides& ov);
     juce::ThreadPool renderPool { 1 };
     mutable juce::SpinLock renderLock;
     juce::File renderFolder;
