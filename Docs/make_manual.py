@@ -140,7 +140,7 @@ def on_cover(c, doc):
     lines = ["Beat-Generator · Synthesizer · Sampler · Noten-Editor",
              "Hip-Hop  ·  Trap  ·  Drill  ·  Lo-Fi  ·  G-Funk",
              "Drum & Bass  ·  Neurofunk  ·  Liquid DnB  ·  Jungle",
-             "", "VST3 · AU · Standalone  –  Windows & macOS (Intel + Apple Silicon)"]
+             "", "VST3 · AU · LV2 · Standalone  –  Windows · macOS · Linux"]
     y = A4[1] - 168 * mm
     for ln in lines:
         c.drawCentredString(A4[0] / 2, y, ln)
@@ -192,10 +192,12 @@ def build():
     # 2
     story += [P("2  Installation", h1),
               P("Die aktuelle Version gibt es immer unter <b>github.com/DreadFPV/Hiphop-Beatmaker</b> → "
-                "<b>Releases → „Neueste Version“</b>. Dort liegen zwei ZIP-Dateien:"),
+                "<b>Releases → „Neueste Version“</b>. Dort liegen die Downloads:"),
               table([["Datei", "Inhalt"],
                      ["HipHopBeatMaker-Windows.zip", "Hip-Hop BeatMaker.vst3, Hip-Hop BeatMaker.exe (Standalone), README, diese Anleitung"],
-                     ["HipHopBeatMaker-macOS.zip", "Hip-Hop BeatMaker.vst3, .component (AU), .app (Standalone), README, diese Anleitung – läuft auf Intel und Apple Silicon ab macOS 11"]],
+                     ["HipHopBeatMaker-macOS.zip", "Hip-Hop BeatMaker.vst3, .component (AU), .app (Standalone), README, diese Anleitung – läuft auf Intel und Apple Silicon ab macOS 11"],
+                     ["HipHopBeatMaker-Linux-x64.tar.gz", "VST3, LV2, Standalone, install.sh, Anleitung – für normale PCs/Laptops (Intel/AMD)"],
+                     ["HipHopBeatMaker-Linux-ARM64.tar.gz", "Dasselbe für 64-Bit-ARM, z. B. Raspberry Pi 4/5 mit 64-Bit-System"]],
                     [55 * mm, CONTENT_W - 55 * mm]),
               P("Windows", h2)]
     story += B(["ZIP entpacken.",
@@ -212,6 +214,14 @@ def build():
     story += [P("xattr -cr \"/Applications/Hip-Hop BeatMaker.app\"<br/>"
                 "xattr -cr ~/Library/Audio/Plug-Ins/VST3/\"Hip-Hop BeatMaker.vst3\"", mono)]
     story += B(["Danach die App per <b>Rechtsklick → Öffnen</b> starten."])
+    story += [P("Linux (x64 und ARM64)", h2)]
+    story += B(["Passendes Archiv laden: <b>Linux-x64</b> für Intel/AMD, <b>Linux-ARM64</b> z. B. für Raspberry Pi 4/5 (64-Bit-System).",
+                "Entpacken und im Ordner <b>install.sh</b> ausführen – ohne root, nur für deinen Benutzer:"])
+    story += [P("tar xzf HipHopBeatMaker-Linux-x64.tar.gz<br/>cd HipHopBeatMaker-Linux-x64<br/>./install.sh", mono)]
+    story += B(["Installiert VST3 nach <font name='DVM'>~/.vst3</font>, LV2 nach <font name='DVM'>~/.lv2</font> und die App ins Startmenü "
+                "(Befehl <font name='DVM'>hiphop-beatmaker</font>). Entfernen: <font name='DVM'>./install.sh --remove</font>.",
+                "Läuft in Reaper, Bitwig, Ardour, Qtractor, Carla usw. Benötigt ALSA (Standard); JACK/PipeWire werden über die "
+                "Audio-Einstellungen der Standalone-App bzw. die DAW genutzt."])
     story += [P("Erster Start der Standalone-App", h2),
               P("Oben links auf <b>Options</b> klicken → <b>Audio/MIDI Settings</b>: Ausgabegerät wählen und – falls "
                 "vorhanden – das MIDI-Keyboard unter <b>Active MIDI inputs</b> aktivieren.")]
@@ -512,6 +522,8 @@ def build():
                       "Neueste Version laden – sie läuft ab macOS 11 auf Intel und Apple Silicon."],
                      ["Kein Ton in der Standalone-App", "Options → Audio/MIDI Settings: Ausgabegerät wählen. „Sounds“ eingeschaltet? Spur gemutet?"],
                      ["Plugin erscheint nicht in Cubase", "Datei im richtigen VST3-Ordner? VST-PlugIn-Manager → Aktualisieren."],
+                     ["Linux: App startet nicht", "Im Terminal <font name='DVM'>hiphop-beatmaker</font> starten und Meldung prüfen; fehlt eine Bibliothek: "
+                      "<font name='DVM'>sudo apt install libasound2 libfreetype6 libfontconfig1</font>. ARM-Version nur auf 64-Bit-Systemen."],
                      ["MIDI-Keyboard spielt nichts", "In Options als MIDI-Input aktivieren; Keyboard-Ziel prüfen (bei Auto auf den MIDI-Kanal achten)."],
                      ["Spur ändert sich beim Würfeln nicht", "Ist ein Schloss zu sehen? Die Spur wurde bearbeitet → im Noten-Editor „Neu generieren“."],
                      ["Tastenkürzel im Plugin funktionieren nicht", "Einmal in den Noten-Editor klicken; alternativ die Buttons der Werkzeugleiste nutzen."],

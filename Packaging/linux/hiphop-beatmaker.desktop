@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hip-Hop BeatMaker
+GenericName=Beat Generator
+Comment=Hip-Hop & Drum and Bass Beats mit MIDI-Export
+Exec=@EXEC@
+Icon=hiphop-beatmaker
+Terminal=false
+Categories=AudioVideo;Audio;Music;Midi;
+Keywords=beat;drum;midi;hiphop;trap;dnb;

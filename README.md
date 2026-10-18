@@ -2,7 +2,7 @@
 
 📖 **Bedienungsanleitung:** [Docs/Bedienungsanleitung.pdf](Docs/Bedienungsanleitung.pdf) (liegt auch in jedem Download-ZIP)
 
-VST3 / AU / Standalone-Instrument (Windows & macOS) von **JustCreateit.ch**.
+VST3 / AU / LV2 / Standalone-Instrument (Windows, macOS, Linux x64 + ARM64) von **JustCreateit.ch**.
 Erzeugt komplette Hip-Hop-Beats – Drums, Bass/808, Keys, Pad und Lead – zum Vorhören und als **MIDI-Export pro Instrument**.
 
 ## Styles
@@ -105,3 +105,5 @@ Anleitung neu erzeugen (Screenshots in `Docs/img`): `python3 Docs/make_manual.py
 - **Windows:** `Hip-Hop BeatMaker.vst3` nach `C:\Program Files\Common Files\VST3\`
 - **macOS:** `.vst3` nach `~/Library/Audio/Plug-Ins/VST3/`, `.component` nach `~/Library/Audio/Plug-Ins/Components/`
   (unsigniert: beim ersten Mal ggf. `xattr -cr "<Pfad zum Plugin>"` ausführen)
+- **Linux (x64 / ARM64):** `tar xzf HipHopBeatMaker-Linux-*.tar.gz`, dann `./install.sh` im entpackten Ordner
+  (VST3 → `~/.vst3`, LV2 → `~/.lv2`, App im Startmenü bzw. Befehl `hiphop-beatmaker`; entfernen mit `./install.sh --remove`)

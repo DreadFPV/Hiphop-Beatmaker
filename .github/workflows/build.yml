@@ -17,6 +17,10 @@ jobs:
             name: Windows
           - os: macos-latest
             name: macOS
+          - os: ubuntu-22.04
+            name: Linux-x64
+          - os: ubuntu-22.04
+            name: Linux-ARM64
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
 
@@ -27,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/_deps
-          key: juce-8.0.4-${{ matrix.os }}
+          key: juce-8.0.4-${{ matrix.name }}
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
@@ -37,8 +41,39 @@ jobs:
         if: runner.os == 'macOS'
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: ./Scripts/setup-linux-deps.sh ${{ matrix.name == 'Linux-ARM64' && 'arm64' || 'x64' }}
+
+      - name: Configure (Linux x64)
+        if: matrix.name == 'Linux-x64'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHHBM_BUILD_TESTS=ON
+
+      - name: Configure (Linux ARM64, cross)
+        if: matrix.name == 'Linux-ARM64'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=Scripts/toolchain-linux-arm64.cmake
+
       - name: Build
         run: cmake --build build --config Release --parallel 4
+
+      - name: Tests (Linux x64)
+        if: matrix.name == 'Linux-x64'
+        run: |
+          sudo apt-get install -y -q xvfb > /dev/null
+          ./build/HHBMRenderTest_artefacts/Release/HHBMRenderTest ./render
+          xvfb-run -a ./build/HHBMProcessorTest_artefacts/Release/HHBMProcessorTest
+
+      - name: Check architecture (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+          R=build/HipHopBeatMaker_artefacts/Release
+          for b in "$R/Standalone/Hip-Hop BeatMaker" "$R/VST3/Hip-Hop BeatMaker.vst3/Contents/"*-linux/*.so "$R/LV2/Hip-Hop BeatMaker.lv2/"*.so; do
+            file -L "$b"
+            if [ "${{ matrix.name }}" = "Linux-ARM64" ]; then file -L "$b" | grep -q aarch64; else file -L "$b" | grep -q x86-64; fi
+          done
+          test -f "$R/LV2/Hip-Hop BeatMaker.lv2/dsp.ttl"
 
       - name: Check architectures (Intel + Apple Silicon)
         if: runner.os == 'macOS'
@@ -69,9 +104,17 @@ jobs:
           if [ -d "build/HipHopBeatMaker_artefacts/Release/Standalone" ]; then
             cp -R build/HipHopBeatMaker_artefacts/Release/Standalone/* "$OUT/"
           fi
+          if [ -d "build/HipHopBeatMaker_artefacts/Release/LV2" ]; then
+            cp -R "build/HipHopBeatMaker_artefacts/Release/LV2/Hip-Hop BeatMaker.lv2" "$OUT/"
+          fi
           cp README.md "$OUT/"
           cp Docs/Bedienungsanleitung.pdf "$OUT/"
-          if [ "$RUNNER_OS" = "Windows" ]; then
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp Packaging/linux/install.sh Packaging/linux/hiphop-beatmaker.desktop "$OUT/"
+            cp Resources/icon.png "$OUT/hiphop-beatmaker.png"
+            chmod +x "$OUT/install.sh" "$OUT/Hip-Hop BeatMaker"
+            tar -czf "$OUT.tar.gz" "$OUT"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
             7z a "$OUT.zip" "$OUT" > /dev/null
           else
             ditto -c -k --keepParent "$OUT" "$OUT.zip"
@@ -80,7 +123,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: HipHopBeatMaker-${{ matrix.name }}
-          path: HipHopBeatMaker-${{ matrix.name }}.zip
+          path: HipHopBeatMaker-${{ matrix.name }}.*
 
   # Rolling "latest" release: every push to main replaces the downloads
   latest:
@@ -100,9 +143,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh release delete latest --repo "$REPO" --cleanup-tag --yes || true
-          gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
+          gh release create latest dist/* --repo "$REPO" --target "$GITHUB_SHA" \
             --title "Neueste Version ($(date -u +%Y-%m-%d) · ${GITHUB_SHA::7})" \
-            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). Bedienungsanleitung (PDF) liegt in jedem ZIP. macOS (Universal: Intel + Apple Silicon, ab macOS 11): VST3 + AU + Standalone (.app)." \
+            --notes "Automatischer Build vom letzten Stand auf main. Windows: VST3 + Standalone (.exe). Bedienungsanleitung (PDF) liegt in jedem ZIP. macOS (Universal: Intel + Apple Silicon, ab macOS 11): VST3 + AU + Standalone (.app). Linux x64 + ARM64 (z. B. Raspberry Pi): VST3 + LV2 + Standalone, Installation mit ./install.sh." \
             --latest
 
   # Versioned release when a tag v* is pushed
@@ -119,4 +162,4 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: dist/*

@@ -25,6 +25,8 @@ endif()
 set(HHBM_FORMATS VST3 Standalone)
 if(APPLE)
     list(APPEND HHBM_FORMATS AU)
+elseif(UNIX)
+    list(APPEND HHBM_FORMATS LV2)
 endif()
 
 juce_add_plugin(HipHopBeatMaker
@@ -42,6 +44,7 @@ juce_add_plugin(HipHopBeatMaker
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png"
+    LV2URI "https://justcreateit.ch/plugins/hiphop-beatmaker"
     VST3_CATEGORIES Instrument Drum Generator
     AU_MAIN_TYPE kAudioUnitType_MusicDevice)
 
