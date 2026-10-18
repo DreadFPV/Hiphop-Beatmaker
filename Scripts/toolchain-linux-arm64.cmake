@@ -10,5 +10,8 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
 # pkg-config must look at the arm64 .pc files
 set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
 set(ENV{PKG_CONFIG_PATH} "")
+# Lets CMake run arm64 build-time tools (JUCE's juce_vst3_helper / juce_lv2_helper) through qemu
+set(CMAKE_CROSSCOMPILING_EMULATOR qemu-aarch64-static)
+
 # JUCE builds juceaide for the host automatically. The LV2/VST3 metadata helpers run the
 # arm64 plugin binary at build time -> needs qemu-user-static + binfmt (see setup-linux-deps.sh).
