@@ -49,11 +49,19 @@ jobs:
         if: matrix.name == 'Linux-x64'
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHHBM_BUILD_TESTS=ON
 
+      - name: Plugin metadata from native x64 build (Linux ARM64)
+        if: matrix.name == 'Linux-ARM64'
+        timeout-minutes: 30
+        run: |
+          cmake -S . -B build-meta -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-meta --target HipHopBeatMaker_VST3 HipHopBeatMaker_LV2 --parallel 4
+
       - name: Configure (Linux ARM64, cross)
         if: matrix.name == 'Linux-ARM64'
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=Scripts/toolchain-linux-arm64.cmake
 
       - name: Build
+        timeout-minutes: 45
         shell: bash
         run: |
           set -o pipefail
@@ -61,6 +69,18 @@ jobs:
             grep -iE "error|failed|not found|no such file|exec format" build.log | grep -v "^--" | head -20 | sed 's/^/::error::/'
             exit 1
           }
+
+      - name: Copy plugin metadata (Linux ARM64)
+        if: matrix.name == 'Linux-ARM64'
+        shell: bash
+        run: |
+          set -e
+          M=build-meta/HipHopBeatMaker_artefacts/Release
+          R=build/HipHopBeatMaker_artefacts/Release
+          cp "$M/LV2/Hip-Hop BeatMaker.lv2/"*.ttl "$R/LV2/Hip-Hop BeatMaker.lv2/"
+          mkdir -p "$R/VST3/Hip-Hop BeatMaker.vst3/Contents/Resources"
+          cp "$M/VST3/Hip-Hop BeatMaker.vst3/Contents/Resources/moduleinfo.json" "$R/VST3/Hip-Hop BeatMaker.vst3/Contents/Resources/"
+          ls -R "$R/LV2" "$R/VST3"
 
       - name: Tests (Linux x64)
         if: matrix.name == 'Linux-x64'

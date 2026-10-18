@@ -36,17 +36,8 @@ if ! $SUDO apt-get update -q > /tmp/apt-update.log 2>&1; then report /tmp/apt-up
 grep -E "^(W|Err):" /tmp/apt-update.log | head -5 || true
 ARMLIBS=""
 for l in $LIBS; do ARMLIBS="$ARMLIBS $l:arm64"; done
-if ! $SUDO apt-get install -y -q build-essential cmake ninja-build pkg-config g++-aarch64-linux-gnu qemu-user-static binfmt-support \
-       libc6:arm64 libstdc++6:arm64 $ARMLIBS > /tmp/apt-install.log 2>&1; then
+if ! $SUDO apt-get install -y -q build-essential cmake ninja-build pkg-config g++-aarch64-linux-gnu file \
+       libc6:arm64 libstdc++6:arm64 $LIBS $ARMLIBS > /tmp/apt-install.log 2>&1; then
   report /tmp/apt-install.log; tail -40 /tmp/apt-install.log; exit 100
 fi
 
-# self-test: can this host run arm64 binaries (needed for JUCE's LV2/VST3 metadata helpers)?
-$SUDO update-binfmts --enable qemu-aarch64 >/dev/null 2>&1 || true
-printf '#include <cstdio>\nint main(){std::puts("arm64-ok");}\n' > /tmp/hello.cpp
-aarch64-linux-gnu-g++ /tmp/hello.cpp -o /tmp/hello-arm64
-if ! /tmp/hello-arm64; then
-  echo "::error::arm64 binaries cannot run on this host (qemu/binfmt). interpreter: $(ls -l /lib/ld-linux-aarch64.so.1 2>&1)"
-  ls /proc/sys/fs/binfmt_misc/ | sed 's/^/::error::binfmt: /'
-  exit 1
-fi
